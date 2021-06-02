@@ -5,7 +5,7 @@ import random
 def sample_points(mesh, n):
     points = np.zeros([n, 3], np.float)
     areas = np.zeros(mesh.cells_dict['triangle'].shape[0], np.float)
-    trinormals = np.zeros([n, 3], np.float)
+    trinormals = np.zeros([areas.shape[0], 3], np.float)
     for i,tri in enumerate(mesh.cells_dict['triangle']):
         base = mesh.points[tri[0],:]
         v1 = mesh.points[tri[1],:] - base

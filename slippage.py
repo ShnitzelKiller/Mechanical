@@ -6,6 +6,7 @@ import math
 from collections import deque
 import sys
 import matplotlib.pyplot as plt
+#from numba import jit
 
 def slippage(in_points, normals, minScale=100, normalize=True):
     """return the list of degrees of freedom as tuples of 3-vectors in the form (euler rotation, translation)"""
@@ -59,23 +60,29 @@ def segmentMesh(V, F, patchRadius):
     vhs = [vh for vh in mesh.vertices()]
     visited = set()
     random.shuffle(vhs)
+    print('designating sources')
     sources = []
     for i,vh in enumerate(vhs):
         if vh.idx() in visited:
             continue
         sources.append(vh)
         neighbors = deque([(vh, 0)])
+        added = 0
         while neighbors:
             curr_vertex, dist = neighbors.popleft()
             visited.add(curr_vertex.idx())
+            added += 1
+            #print('from vertex',curr_vertex.idx(), 'dist', dist)
             for heh in mesh.voh(curr_vertex):
                 nh = mesh.to_vertex_handle(heh)
                 if nh.idx() not in visited:
                     diff = mesh.point(nh) - mesh.point(curr_vertex)
                     newDist = dist + math.sqrt(diff.dot(diff))
                     if newDist < patchRadius:
+                        #print(nh.idx())
                         neighbors.append((nh, newDist))
-    print(len(sources))
+        print('added',added,'neighbors')
+    print('sources:',len(sources))
     #TODO: run djikstra's to get final patches
     #values are (source index, dist, vertex handle)
     known = dict()
@@ -102,11 +109,11 @@ def segmentMesh(V, F, patchRadius):
                     frontier[nh.idx()] = source, newDist, nh
 
     #debug
-    #allpoints = mesh.points()
-    #fig = plt.figure()
-    #ax = fig.add_subplot(projection='3d')
-    #ax.scatter(allpoints[:,0], allpoints[:,1], allpoints[:,2], c=[known[vh.idx()] for vh in mesh.vertices()])
-    #plt.show()
+    allpoints = mesh.points()
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+    ax.scatter(allpoints[:,0], allpoints[:,1], allpoints[:,2], c=[known[vh.idx()] for vh in mesh.vertices()])
+    plt.show()
 
 
     
@@ -118,9 +125,8 @@ if __name__ == "__main__":
     #mesh = meshio.read("data/cylinder.obj")
     mesh = meshio.read("data/subdivided_tube.obj")
     print('vertices:', mesh.points.shape[0])
-    segmentMesh(mesh.points, mesh.cells_dict['triangle'], 0.5)
-    #points, normals = utils.sample_points(mesh, 1000)
-    #dofs = slippage(points, normals, normalize=True)
-    #for i, dof in enumerate(dofs):
-    #    print('dof',i,':',dof)
-    #halfEdge = createHalfEdge(mesh.points, mesh.cells_dict['triangle'])
+    #segmentMesh(mesh.points, mesh.cells_dict['triangle'], 0.5)
+    points, normals = utils.sample_points(mesh, 1000)
+    dofs = slippage(points, normals, normalize=True)
+    for i, dof in enumerate(dofs):
+        print('dof',i,':',dof)
