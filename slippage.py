@@ -45,8 +45,8 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import meshio
     import utils
-    #mesh = meshio.read("data/cylinder.obj")
-    mesh = meshio.read("../tests/lego/part_5_contactonly_conservative.obj")
+    mesh = meshio.read("data/halfpipe.obj")
+    #mesh = meshio.read("../tests/lego/part_5_contactonly_conservative.obj")
     print('vertices:', mesh.points.shape[0])
     #segmentMesh(mesh.points, mesh.cells_dict['triangle'], 0.5)
     points, normals = utils.sample_points(mesh, 10000)
