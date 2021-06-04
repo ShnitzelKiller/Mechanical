@@ -35,7 +35,7 @@ def slippage(points, normals, condition_number=150, normalize=True):
     #print(w)
     dofs = []
     for i in range(6):
-        if w[i] == 0 or w[5]/w[i] > condition_number:
+        if w[i] <= 0 or w[5]/w[i] > condition_number:
             rigidMotion = np.hstack((v[:3, i], v[3:, i] * avgscale - np.cross(v[:3, i], cm)))
             dofs.append(normalized(rigidMotion))
     return dofs
@@ -45,7 +45,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import meshio
     import utils
-    mesh = meshio.read("data/halfpipe.obj")
+    mesh = meshio.read("data/cylinder_offcenter.obj")
     #mesh = meshio.read("../tests/lego/part_5_contactonly_conservative.obj")
     print('vertices:', mesh.points.shape[0])
     #segmentMesh(mesh.points, mesh.cells_dict['triangle'], 0.5)
