@@ -160,9 +160,6 @@ class Simulator:
             ck.reduce_forces_torques[cuda_grid_dim, self.cuda_point_block_dims](self.forces_accum_d[j], self.forces_d[j])
             forces_accum = self.forces_accum_d[j].copy_to_host()
             
-            self.objects[j].momentum += forces_accum[:3] * dt
-            self.objects[j].angular_momentum += forces_accum[3:] * dt
-            
             self.objects[j].step(forces_accum[:3], forces_accum[3:], dt)
             self.copy_state_to_device()
         
