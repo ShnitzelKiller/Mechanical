@@ -148,7 +148,7 @@ class Simulator:
             self.states_d[i].copy_to_device(state)
 
     def record_state(self):
-        self.allstates.append((self.t, [(obj.rotation, obj.translation) for obj in self.objects]))
+        self.allstates.append((self.t, [(obj.rotation.copy(), obj.translation.copy()) for obj in self.objects]))
 
     def step(self, dt):
         ck.empty_grid[self.cuda_volume_grid_dims, self.cuda_volume_block_dims](self.grid_d)
