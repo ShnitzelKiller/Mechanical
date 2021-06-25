@@ -1,6 +1,10 @@
 from numba import cuda, int32, int64, float32
 import physics.vectormath as vm
 import math
+
+
+TPB = 32
+TPB_volume = 4
     
 @cuda.jit
 def populate_grid_kernel(points1, pose1, points2, pose2, grid, minPt, gridDim, cell_size):
@@ -174,7 +178,6 @@ def compute_forces(outForces1, points1, pose1, outForces2, points2, pose2, grid,
         outForces[i, 4] = torque[1]
         outForces[i, 5] = torque[2]
 
-TPB = 32
 
 @cuda.jit
 def reduce_forces_torques(d_accum, d_f):

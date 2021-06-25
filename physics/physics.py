@@ -125,11 +125,11 @@ class Simulator:
         print('copied data to GPU in',end-start)
         
         m = np.sum([obj.points.shape[0] for obj in self.objects])
-        TPB = 32
+        TPB = ck.TPB
         self.cuda_point_grid_dims = (m + TPB - 1) // TPB
         self.cuda_point_block_dims = TPB
 
-        TPCB = 4
+        TPCB = ck.TPB_volume
         self.cuda_volume_grid_dims = ((res[0] + TPCB - 1) // TPCB, (res[1] + TPCB - 1) // TPCB, (res[2] + TPCB - 1) // TPCB)
         self.cuda_volume_block_dims = (TPCB, TPCB, TPCB)
         self.num_points = m
