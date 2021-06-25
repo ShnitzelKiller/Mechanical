@@ -161,8 +161,8 @@ class Simulator:
             forces_accum = self.forces_accum_d[j].copy_to_host()
             
             self.objects[j].step(forces_accum[:3], forces_accum[3:], dt)
-            self.copy_state_to_device()
-        
+
+        self.copy_state_to_device()
         self.t += dt
         self.record_state()
 
