@@ -1,5 +1,5 @@
 from numba import cuda, int32, int64, float32
-import physics.vectormath as vm
+from . import vectormath as vm
 import math
 
 
