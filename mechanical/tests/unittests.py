@@ -6,7 +6,7 @@ import math
 
 class TestPhysObject(unittest.TestCase):
     def setUp(self):
-        v, f = igl.read_triangle_mesh('../data/cylinder3.obj')
+        v, f = igl.read_triangle_mesh('data/cylinder3.obj')
         self.mesh = (v, f)
         
 

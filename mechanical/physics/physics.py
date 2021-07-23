@@ -27,19 +27,32 @@ def compute_inertia_tensor(points, pointmass):
 
 
 class PhysObject:
-    def __init__(self, V, F, gridDim, translation, rotation=np.array([1, 0, 0, 0], np.float32), density=1, angular_velocity=np.zeros(3, np.float32), velocity=np.zeros(3, np.float32)):
-        self.points = sampling.sample_mesh_interior(V, F, gridDim)
+    def __init__(self, V, F, gridDim, translation=np.array([0, 0, 0], np.float32), rotation=np.array([1, 0, 0, 0], np.float32), density=1, angular_velocity=np.zeros(3, np.float32), velocity=np.zeros(3, np.float32), bounds=None):
+        """Create PhysObject with specified sample grid density. If using bounds=(minPt, maxPt), only points in the bounding box will be kept for simulation (though physical quantities are computed using full point set)"""
+        self.points, self.bounds = sampling.sample_mesh_interior(V, F, gridDim, np.float32)
+        if self.points.shape[0] == 0:
+            print('WARNING: NO POINTS SAMPLED')
         pointmass = density * gridDim ** 3
         cm = np.mean(self.points, 0)
         self.points -= cm
         self.mass = pointmass * self.points.shape[0]
         self.inertia_tensor = compute_inertia_tensor(self.points, pointmass)
         self.inertia_tensor_inv = la.inv(self.inertia_tensor)
+        self.V = V - cm
+        self.F = F
 
-        self.translation = translation
-        self.rotation = rotation
+        if bounds is not None:
+            self.bounds = (bounds[0] - cm, bounds[1] - cm)
+            self.points = sampling.bbox_filter(self.points, self.bounds[0], self.bounds[1])
+        else:
+            self.bounds[0] -= cm
+            self.bounds[1] -= cm
+
+        self.translation = translation.copy() + cm
+        self.rotation = rotation.copy()
         self.set_angular_velocity(angular_velocity)
         self.set_velocity(velocity)
+
 
     def get_world_space_inertia_tensor(self):
         R = vm.quaternion_to_matrix(self.rotation)
