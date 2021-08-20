@@ -2,6 +2,7 @@ import numpy as np
 import igl
 import math
 from numba import jit, njit, vectorize
+import random
 
 def voxel_points(axes):
     """generate n-dimensional grid coordinates from the given set of (x, y, z...) values"""
@@ -46,7 +47,7 @@ def sample_mesh_interior(V, F, gridLength, dtype=np.float32):
     return q[w > 0.5], [minPt, maxPt]
 
 
-def sample_surface_points(mesh, n):
+def sample_mesh_surface_points(mesh, n):
     points = np.zeros([n, 3], np.float)
     areas = np.zeros(mesh.cells_dict['triangle'].shape[0], np.float)
     trinormals = np.zeros([areas.shape[0], 3], np.float)
@@ -78,3 +79,34 @@ def sample_surface_points(mesh, n):
         normals[i,:] = trinormals[index,:]
     return points, normals
 
+def sample_surface_points(V, F, n):
+    points = np.zeros([n, 3], np.float)
+    areas = np.zeros(F.shape[0], np.float)
+    trinormals = np.zeros([areas.shape[0], 3], np.float)
+    for i in range(F.shape[0]):
+        base = V[F[i,0],:]
+        v1 = V[F[i,1],:] - base
+        v2 = V[F[i,2],:] - base
+        normal = np.cross(v1, v2)
+        area = math.sqrt(normal.dot(normal))
+        trinormals[i,:] = normal / area
+        areas[i] = area
+    total_area = np.sum(areas)
+    areas /= total_area
+    choices = [c for c in range(len(areas))]
+    normals = np.zeros([n, 3], np.float)
+    for i in range(n):
+        index = random.choices(choices, areas)[0]
+        tri = F[index,:]
+        base = V[tri[0],:]
+        v1 = V[tri[1],:] - base
+        v2 = V[tri[2],:] - base
+        u1 = random.random()
+        u2 = random.random()
+        if u1 + u2 > 1:
+            u1 = 1-u1
+            u2 = 1-u1
+        rp = base + u1 * v1 + u2 * v2
+        points[i,:] = rp
+        normals[i,:] = trinormals[index,:]
+    return points, normals
