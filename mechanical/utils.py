@@ -1,4 +1,6 @@
 import numpy as np
+import numba
+from numba import jit, njit
 
 def joinmeshes(meshes):
     F = []
@@ -30,13 +32,14 @@ def adjacency_matrix(occs, mates):
     
     return adj
 
+@njit
 def connected_components(adj, connectionType = 'any'):
     """
     Find number of connected components
     ConnectionType: any -> all mates are considered
     fasten -> only fastens are considered (find rigidly connected components)
     """
-    visited = np.zeros(adj.shape[0], bool)
+    visited = np.zeros(adj.shape[0], dtype=numba.uint8)
     components = 0
     for j in range(len(visited)):
         if not visited[j]:
@@ -46,7 +49,7 @@ def connected_components(adj, connectionType = 'any'):
                 curr = frontier.pop()
                 if visited[curr]:
                     continue
-                visited[curr] = True
+                visited[curr] = 1
                 for i,ne in enumerate(adj[:,curr]):
                     if connectionType == 'any':
                         if ne > 0:
