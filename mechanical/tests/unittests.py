@@ -4,7 +4,7 @@ import igl
 import numpy as np
 import math
 import onshape.brepio as brepio
-from utils import adjacency_list, homogenize, connected_components, connected_components_dense, adjacency_matrix
+from utils import adjacency_list, adjacency_list_from_brepdata, homogenize, connected_components, connected_components_dense, adjacency_matrix
 import time
 
 class TestDataAnalysis(unittest.TestCase):
@@ -20,7 +20,7 @@ class TestDataAnalysis(unittest.TestCase):
     def test_adjacency(self):
         start = time.time()
         print('creating adjacency list')
-        adj = adjacency_list(self.occs, self.mates)
+        adj = adjacency_list_from_brepdata(self.occs, self.mates)
         end = time.time()
         print('time taken to create adjacency matrix:',end-start)
         start = end
@@ -36,7 +36,7 @@ class TestDataAnalysis(unittest.TestCase):
     
     def test_connected_components(self):
         
-        adj = adjacency_list(self.occs, self.mates)
+        adj = adjacency_list_from_brepdata(self.occs, self.mates)
         adj_mat = homogenize(adj)
         adj_dense = adjacency_matrix(self.occs, self.mates)
 

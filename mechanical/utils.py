@@ -19,7 +19,7 @@ def adjacency_matrix(occs, mates):
     for i in range(len(occs)):
         occ2index[index2occ[i]] = i
     
-    for i,mate in enumerate(mates):
+    for mate in mates:
         if len(mate.matedEntities) == 2:
             if mate.type.lower().startswith('fasten'):
                 mateType = 1
@@ -33,6 +33,10 @@ def adjacency_matrix(occs, mates):
     return adj
 
 def adjacency_list(occs, mates):
+    """
+    Adjacency list given occurrences as a list of ids, and mates as a list of 3-tuples
+    of (id1, id2, type)
+    """
     adj = [[] for o in occs]
     index2occ = []
     for occ in occs:
@@ -41,17 +45,21 @@ def adjacency_list(occs, mates):
     for i in range(len(occs)):
         occ2index[index2occ[i]] = i
     
-    for i,mate in enumerate(mates):
-        if len(mate.matedEntities) == 2:
-            if mate.type.lower().startswith('fasten'):
-                mateType = 1
-            else:
-                mateType = 2
-            ind1 = occ2index[mate.matedEntities[0][0]]
-            ind2 = occ2index[mate.matedEntities[1][0]]
-            adj[ind1].append((ind2, mateType))
-            adj[ind2].append((ind1, mateType))
+    for mate in mates:
+        if mate[2].lower().startswith('fasten'):
+            mateType = 1
+        else:
+            mateType = 2
+        ind1 = occ2index[mate[0]]
+        ind2 = occ2index[mate[1]]
+        adj[ind1].append((ind2, mateType))
+        adj[ind2].append((ind1, mateType))
     return adj
+
+def adjacency_list_from_brepdata(occs, mates):
+    mates = [(mate.matedEntities[0][0], mate.matedEntities[1][0], mate.type) for mate in mates if len(mate.matedEntities) == 2]
+    return adjacency_list(occs, mates)
+
 
 def homogenize(lst):
     N = len(lst)
