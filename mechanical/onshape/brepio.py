@@ -32,8 +32,7 @@ class Loader:
         part_occs = assembly_def['part_occurrences']
         for occ in part_occs:
             if len(occ['partId']) == 0:
-                print('empty part ID for part ',occ['id'])
-                raise KeyError
+                raise KeyError('empty key')
 
         def part_from_occ(occ, checkOnly=False):
             did = occ['documentId']
@@ -43,17 +42,15 @@ class Loader:
             pid = occ['partId']
             filepath = os.path.join(self.datapath, 'data/models/', did, mv, eid, config, f'{pid}.xt')
             if not os.path.isfile(filepath):
-                print('part not found',filepath)
                 raise FileNotFoundError(filepath)
             if not checkOnly:
                 return Part(filepath)
         
-        [part_from_occ(occ, checkOnly=True) for occ in part_occs] #check for exceptions first
-        
         if geometry:
+            [part_from_occ(occ, checkOnly=True) for occ in part_occs] #check for exceptions first
             part_occ_dict = dict([(occ['id'], (np.array(occ['transform']).reshape(4, 4), part_from_occ(occ))) for occ in part_occs])
         else:
-            part_occ_dict = dict([(occ['id'], np.array(occ['transform']).reshape(4, 4)) for occ in part_occs])
+            part_occ_dict = dict([(occ['id'], (np.array(occ['transform']).reshape(4, 4), occ)) for occ in part_occs])
         mates = [Mate(mate, flattened=True) for mate in assembly_def['mates']]
 
         return part_occ_dict, mates
