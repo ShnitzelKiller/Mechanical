@@ -1,5 +1,5 @@
 import json
-from pspart import Part
+from pspart import Part, MateConnector
 import os
 import numpy as np
 
@@ -9,13 +9,20 @@ def frame_from_mated_cs(mated_cs):
     return origin, frame
 
 class Mate:
-    def __init__(self, mate, flattened=False):
-        if flattened:
-            self.matedEntities = [(me['matedOccurrence'], frame_from_mated_cs(me['matedCS'])) for me in mate['matedEntities'] if me['occurrenceType'] == 'Part']
+    def __init__(self, mate=None, flattened=False, mcs=[], occIds=[], mateType='UNKNOWN', name=''):
+        if mate is None:
+            frames = [mc.get_coordinate_system() for mc in mcs]
+            self.matedEntities = [(occ, (cs[:3,3], cs[:3,:3])) for occ, cs in zip(occIds, frames)]
+            self.type = mateType
+            self.name = name
         else:
-            mate = mate['featureData']
-            self.matedEntities = [(me['matedOccurrence'][-1], frame_from_mated_cs(me['matedCS'])) for me in mate['matedEntities']]
-        self.type = mate['mateType']
+            if flattened:
+                self.matedEntities = [(me['matedOccurrence'], frame_from_mated_cs(me['matedCS'])) for me in mate['matedEntities'] if me['occurrenceType'] == 'Part']
+            else:
+                mate = mate['featureData']
+                self.matedEntities = [(me['matedOccurrence'][-1], frame_from_mated_cs(me['matedCS'])) for me in mate['matedEntities']]
+            self.type = mate['mateType']
+            self.name = mate['name']
 
 
 
@@ -23,18 +30,19 @@ class Loader:
     def __init__(self, datapath):
         self.datapath = datapath
     
-    def load_flattened(self, path, geometry=True):
+    def load_flattened(self, path, geometry=True, skipInvalid=False):
         #_,fname = os.path.split(path)
         #name, ext = os.path.splitext(fname)
         #did, mv, eid = name.split('_')
         with open(os.path.join(self.datapath, 'data/flattened_assemblies', path)) as f:
             assembly_def = json.load(f)
         part_occs = assembly_def['part_occurrences']
-        for occ in part_occs:
-            if len(occ['partId']) == 0:
-                raise KeyError('empty key')
+        if not skipInvalid:
+            for occ in part_occs:
+                if len(occ['partId']) == 0:
+                    raise KeyError('empty key')
 
-        def part_from_occ(occ, checkOnly=False):
+        def part_from_occ(occ, checkOnly=False, silent=False):
             did = occ['documentId']
             mv = occ['documentMicroversion']
             eid = occ['elementId']
@@ -42,13 +50,17 @@ class Loader:
             pid = occ['partId']
             filepath = os.path.join(self.datapath, 'data/models/', did, mv, eid, config, f'{pid}.xt')
             if not os.path.isfile(filepath):
-                raise FileNotFoundError(filepath)
+                if silent:
+                    return None
+                else:
+                    raise FileNotFoundError(filepath)
             if not checkOnly:
                 return Part(filepath)
         
         if geometry:
-            [part_from_occ(occ, checkOnly=True) for occ in part_occs] #check for exceptions first
-            part_occ_dict = dict([(occ['id'], (np.array(occ['transform']).reshape(4, 4), part_from_occ(occ))) for occ in part_occs])
+            if not skipInvalid:
+                [part_from_occ(occ, checkOnly=True) for occ in part_occs] #check for exceptions first
+            part_occ_dict = dict([(occ['id'], (np.array(occ['transform']).reshape(4, 4), part_from_occ(occ, silent=skipInvalid))) for occ in part_occs])
         else:
             part_occ_dict = dict([(occ['id'], (np.array(occ['transform']).reshape(4, 4), occ)) for occ in part_occs])
         mates = [Mate(mate, flattened=True) for mate in assembly_def['mates']]

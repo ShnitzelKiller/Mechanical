@@ -1,7 +1,31 @@
 import numpy as np
 import meshplot as mp
 
-def add_axis(plot, center, x_dir, y_dir, z_dir, scale=1):
+def make_edge_ring(N):
+    Ec = np.empty([N, 2], np.int64)
+    Ec[:,0] = np.arange(N)
+    Ec[:-1,1] = Ec[1:,0]
+    Ec[-1,1] = Ec[0,0]
+    return Ec
+
+def add_circle(plot, center, u, v, scale, color, N=20):
+    circ = np.empty([N, 3], dtype=np.float64)
+    for i in range(N):
+        ang = i/N * np.pi * 2
+        circ[i,:] = center + scale * (u * np.cos(ang) + v * np.sin(ang))
+    Ec = make_edge_ring(N)
+    plot.add_edges(circ, Ec, shading={'line_color':color,'line_width':5})
+
+def add_square(plot, center, u, v, scale, color):
+    square = np.empty([4, 3], dtype=np.float64)
+    square[0,:] = center
+    square[1,:] = center + u * scale
+    square[2,:] = center + u * scale + v * scale
+    square[3,:] = center + v * scale
+    Ec = make_edge_ring(4)
+    plot.add_edges(square, Ec, shading={'line_color':color,'line_width':5})
+
+def add_axis(plot, center, x_dir, y_dir, z_dir, scale=1, mate_type=None):
     V = np.array([center, center+x_dir * scale, center+y_dir * scale, center+z_dir * scale])
     Ex = np.array([[0,1]])
     Ey = np.array([[0,2]])
@@ -9,6 +33,27 @@ def add_axis(plot, center, x_dir, y_dir, z_dir, scale=1):
     plot.add_edges(V, Ex, shading={'line_color':'red','line_width':5})
     plot.add_edges(V, Ey, shading={'line_color':'green','line_width':5})
     plot.add_edges(V, Ez, shading={'line_color':'blue','line_width':5})
+    N = 20
+    if mate_type == 'REVOLUTE':
+        add_circle(plot, center, x_dir, y_dir, scale, 'blue', N)
+    elif mate_type == 'BALL':
+        add_circle(plot, center, x_dir, y_dir, scale, 'blue', N)
+        add_circle(plot, center, y_dir, z_dir, scale, 'red', N)
+        add_circle(plot, center, z_dir, x_dir, scale, 'green', N)
+    elif mate_type == 'CYLINDRICAL':
+        add_circle(plot, center, x_dir, y_dir, scale, 'cyan', N)
+        add_circle(plot, center+z_dir*scale/2, x_dir, y_dir, scale, 'cyan', N)
+    elif mate_type == 'FASTENED':
+        add_square(plot, center, x_dir, y_dir, scale/2, 'blue')
+        add_square(plot, center, y_dir, z_dir, scale/2, 'red')
+        add_square(plot, center, z_dir, x_dir, scale/2, 'blue')
+    elif mate_type == 'SLIDER':
+        add_square(plot, center, x_dir, y_dir, scale/2, 'cyan')
+        add_square(plot, center+z_dir*scale/2, x_dir, y_dir, scale/2, 'cyan')
+    elif mate_type == 'PLANAR':
+        add_square(plot, center, x_dir, y_dir, scale, 'blue')
+    elif mate_type == 'PARALLEL':
+        add_square(plot, center, x_dir, y_dir, scale, 'orange')
 
 
 def hsv2rgb(h, s, v):
@@ -60,42 +105,62 @@ def occ_to_mesh(g):
 
 
 
-def inspect(geo, mates, p=None, wireframe=False):
+def inspect(geo, mates, p=None, wireframe=False, show_parts=True):
     maxdim = max([max(geo[i][1].V.max(0)-geo[i][1].V.min(0)) for i in geo if geo[i][1].V.shape[0] > 0])
     num_parts = len(geo)
     part_index = 0
+    geo_colors = dict()
     for i in geo:
         g = geo[i]
+        if g[1] is None:
+            continue
         V, F = occ_to_mesh(g)
         if V.shape[0] == 0:
             continue
         colors = np.array(get_color(part_index, num_parts))
+        geo_colors[i] = colors
         part_index += 1
-        try:
-            plot
-        except NameError:
-            if wireframe:
-                if p is None:
-                    plot = emptyplot()
+        if show_parts:
+            try:
+                plot
+            except NameError:
+                if wireframe:
+                    if p is None:
+                        plot = emptyplot()
+                    else:
+                        plot = p
+                    plot.reset()
+                    plot.add_edges(V, F, shading={'line_color': 'red'})
                 else:
-                    plot = p
-                plot.reset()
-                plot.add_edges(V, F, shading={'line_color': 'red'})
+                    plot = mp.plot(V, F, c=colors, return_plot=True, plot=p)
             else:
-                plot = mp.plot(V, F, c=colors, return_plot=True, plot=p)
-        else:
-            if wireframe:
-                plot.add_edges(V, F, shading={'line_color': 'red'})
-            else:
-                plot.add_mesh(V, F, c=colors)
+                if wireframe:
+                    plot.add_edges(V, F, shading={'line_color': 'red'})
+                else:
+                    plot.add_mesh(V, F, c=colors)
+    if not show_parts:
+        plot = emptyplot() if p is None else p
+        plot.reset()
 
-    for mate in mates:
+    mate_origins = []
+    mate_colors = []
+    for i,mate in enumerate(mates):
         if len(mate.matedEntities)==2:
             for mated in mate.matedEntities:
                 tf = geo[mated[0]][0]
                 newaxes = tf[:3, :3] @ mated[1][1]
                 neworigin = tf[:3,:3] @ mated[1][0] + tf[:3,3]
-                add_axis(plot, neworigin, newaxes[:,0], newaxes[:,1], newaxes[:,2], scale=maxdim/10)
+                add_axis(plot, neworigin, newaxes[:,0], newaxes[:,1], newaxes[:,2], scale=maxdim/10, mate_type=mate.type)
+                mate_origins.append(neworigin)
+            if mate.matedEntities[0][0] in geo_colors and mate.matedEntities[1][0] in geo_colors:
+                mate_color = 0.5 * (geo_colors[mate.matedEntities[0][0]] + geo_colors[mate.matedEntities[1][0]])
+            else:
+                mate_color = np.zeros(3)
+            mate_colors.append(mate_color)
+            mate_colors.append(mate_color)
+    mate_origins = np.vstack(mate_origins)
+    mate_colors = np.vstack(mate_colors)
+    plot.add_points(mate_origins, c=mate_colors, shading={'point_size':maxdim/10})
     return plot
 
 def emptyplot():
