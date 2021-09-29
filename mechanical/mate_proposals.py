@@ -156,7 +156,9 @@ if __name__ == '__main__':
                     frame[:,2] = vec
                     frame[:,1] = np.cross(vec, vec_next)
                     homogenized = homogenize_frame(frame,z_flip_only=False)
+                    assert(LA.det(homogenized) == 1)
                     homogenized_z = homogenize_frame(frame,z_flip_only=True)
+                    assert(LA.det(homogenized_z) == 1)
                     homogenized_all.append(homogenized)
                     homogenized_z_all.append(homogenized_z)
         for h in homogenized_z_all[1:]:
