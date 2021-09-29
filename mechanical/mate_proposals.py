@@ -140,6 +140,37 @@ def mate_proposals(parts, epsilon_rel=0.001, max_groups=10):
     return proposals
 
 if __name__ == '__main__':
+    homogenized_all = []
+    for axis in range(3):
+        homogenized_z_all = []
+        for flip in range(2):
+            vec = np.zeros(3)
+            vec[axis] = -1 if flip else 1
+
+            for axis_next in range(2):
+                for flip_next in range(2):
+                    vec_next = np.zeros(3)
+                    vec_next[(axis+1+axis_next)%3] = -1 if flip_next else 1
+                    frame = np.empty((3,3))
+                    frame[:,0] = vec_next
+                    frame[:,2] = vec
+                    frame[:,1] = np.cross(vec, vec_next)
+                    homogenized = homogenize_frame(frame,z_flip_only=False)
+                    homogenized_z = homogenize_frame(frame,z_flip_only=True)
+                    homogenized_all.append(homogenized)
+                    homogenized_z_all.append(homogenized_z)
+        for h in homogenized_z_all[1:]:
+            dist = LA.norm(h-homogenized_z_all[0])
+            if dist > 0:
+                print(f'error for z: dist nonzero: {dist}')
+                print(h)
+                print(homogenized_z_all[0])
+    for h in homogenized_all[1:]:
+        dist = LA.norm(h-homogenized_all[0])
+        if dist > 0:
+            print(f'error: dist nonzero: {dist}')
+
+if __name__ == '__main__2':
     import os
     tol = 0.01
     datapath = '/projects/grail/benjones/cadlab'
