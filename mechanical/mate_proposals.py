@@ -31,7 +31,7 @@ def homogenize_sign(vec):
     if vec[maxdim] < 0:
         return -vec, True
     else:
-        return vec, False
+        return vec.copy(), False
 
 @njit
 def vec3_tuple(vec):
