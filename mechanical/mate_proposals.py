@@ -99,7 +99,7 @@ def mate_proposals(parts, epsilon_rel=0.001, max_groups=10):
     mc_axis = [frame[:,2] for frame in mc_frames]
     mc_quat = [R.from_matrix(frame).as_quat() for frame in mc_frames]
     nnhash = pspart.NNHash(mc_axis, 3, epsilon_rel)
-    tree = IntervalTree([Interval(l, u, d) for l, u, d in interval2part])
+    tree = IntervalTree([Interval(l, u, d) for l, u, d in interval2part if l < u])
     
     #for each axial cluster, find nearest neighbors of projected set of frames with the same axis direction
     proposals = set()
@@ -139,7 +139,7 @@ def mate_proposals(parts, epsilon_rel=0.001, max_groups=10):
                     proposals.add((pi1, pi2, mci1, mci2))
     return proposals
 
-if __name__ == '__main__':
+if __name__ == '__main__2':
     homogenized_all = []
     for axis in range(3):
         homogenized_z_all = []
@@ -172,7 +172,7 @@ if __name__ == '__main__':
         if dist > 0:
             print(f'error: dist nonzero: {dist}')
 
-if __name__ == '__main__2':
+if __name__ == '__main__':
     import os
     tol = 0.01
     datapath = '/projects/grail/benjones/cadlab'
