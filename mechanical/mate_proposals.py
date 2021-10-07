@@ -98,11 +98,28 @@ def mate_proposals(parts, epsilon_rel=0.001, max_groups=10):
         total_mcs = new_total
     mc_axis = [frame[:,2] for frame in mc_frames]
     mc_quat = [R.from_matrix(frame).as_quat() for frame in mc_frames]
+    mc_ray = [np.concatenate([origin, axis]) for origin, axis in zip(mc_origin, mc_axis)]
     nnhash = pspart.NNHash(mc_axis, 3, epsilon_rel)
+    rayhash = pspart.NNHash(mc_ray, 6, epsilon_rel)
     tree = IntervalTree([Interval(l, u, d) for l, u, d in interval2part if l < u])
-    
-    #for each axial cluster, find nearest neighbors of projected set of frames with the same axis direction
+
     proposals = set()
+    #get all coincident mate connectors
+    for i,ray in enumerate(mc_ray):
+        nearest = rayhash.get_nearest_points(ray)
+        part_index = next(iter(tree[i])).data
+        for j in nearest:
+            other_part_index = next(iter(tree[j])).data
+            if other_part_index != part_index:
+                pi1, pi2 = part_index, other_part_index
+                mci1, mci2 = i - part2offset[part_index], j - part2offset[other_part_index]
+                if pi1 > pi2:
+                    pi1, pi2 = pi2, pi1
+                    mci1, mci2 = mci2, mci1
+                proposals.add((pi1, pi2, mci1, mci2))
+
+    #for each axial cluster, find nearest neighbors of projected set of frames with the same axis direction
+    
     result = cluster_axes(nnhash, mc_axis)
     # print(result)
     group_indices = list(result)
