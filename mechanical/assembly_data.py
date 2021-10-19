@@ -211,7 +211,7 @@ if __name__ == '__main__':
     import onshape.brepio as brepio
     datapath = '/projects/grail/benjones/cadlab'
     loader = brepio.Loader(datapath)
-    geo, mates = loader.load_flattened('e4803faed1b9357f8db3722c_ce43730c0f1758f756fc271f_c00b5256d7e874e534c083e8.json', skipInvalid=True, geometry=False)
+    geo, mates = loader.load_flattened('4a6425e414eac5bfb60c666b_7b79fa9711d3c7e04a4e73b4_1474f34c51b93e9d12776a28.json', skipInvalid=True, geometry=False)
     occ_ids = list(geo.keys())
     part_paths = []
     transforms = []
