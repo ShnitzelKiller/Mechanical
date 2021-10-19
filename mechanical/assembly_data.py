@@ -113,6 +113,7 @@ class AssemblyInfo:
         #pin slots may be completely messed up by this...
 
         #criteria:
+        # - fastens: Any mate connectors which coincide up to xy rotations (because of the above) will do
         # - sliders: Any mate connectors along a parallel axis will do
         # - revolute: Any mate connectors with coincident origins along the rotational axis will do
         # - cylindrical: Any mate connectors along the rotational axis will do
