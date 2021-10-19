@@ -138,6 +138,14 @@ def inspect(geo, mates, p=None, wireframe=False, show_parts=True):
                     plot.add_edges(V, F, shading={'line_color': 'red'})
                 else:
                     plot.add_mesh(V, F, c=colors)
+            mcf_origins = []
+            tf = g[0]
+            for mc in g[1].all_mate_connectors:
+                mcf = mc.get_coordinate_system()
+                mcf_origins.append(tf[:3,:3] @ mcf[:3,3] + tf[:3,3])
+            mcf_origins = np.array(mcf_origins)
+            plot.add_points(mcf_origins,shading={'point_size':maxdim/15})
+
     if not show_parts:
         plot = emptyplot() if p is None else p
         plot.reset()

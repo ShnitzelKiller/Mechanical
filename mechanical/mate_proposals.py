@@ -1,10 +1,9 @@
-from intervaltree import IntervalTree, Interval
 import pspart
 import numpy as np
 import numpy.linalg as LA
-import numba
 from numba import njit
 from scipy.spatial.transform import Rotation as R
+from utils import start_indices_to_interval_tree
 
 
 def cluster_axes(nnhash, axes):
@@ -68,6 +67,7 @@ def homogenize_frame(frame, z_flip_only=True):
     frame_out[:,2] = z_final
     return frame_out
 
+
 def mate_proposals(parts, epsilon_rel=0.001, max_groups=10):
     """
     Find list of (part1, part2, mc1, mc2) of probable mate locations given a list of (transform, pspart.Part)
@@ -78,8 +78,7 @@ def mate_proposals(parts, epsilon_rel=0.001, max_groups=10):
     maxdim = max([(part.bounding_box()[1]-part.bounding_box()[0]).max() for _, part in parts])
     mc_frames = []
     mc_origin = []
-    interval2part = []
-    part2offset = dict()
+    part2offset = [-1] * len(parts)
     total_mcs = 0
     for i,tf_part in enumerate(parts):
         tf, part = tf_part
@@ -92,24 +91,22 @@ def mate_proposals(parts, epsilon_rel=0.001, max_groups=10):
 
             mc_frames.append(frame)
             mc_origin.append(origin)
-        new_total = total_mcs + len(part.all_mate_connectors)
-        interval2part.append((total_mcs, new_total, i))
         part2offset[i] = total_mcs
-        total_mcs = new_total
+        total_mcs += len(part.all_mate_connectors)
     mc_axis = [frame[:,2] for frame in mc_frames]
     mc_quat = [R.from_matrix(frame).as_quat() for frame in mc_frames]
     mc_ray = [np.concatenate([origin, axis]) for origin, axis in zip(mc_origin, mc_axis)]
     nnhash = pspart.NNHash(mc_axis, 3, epsilon_rel)
     rayhash = pspart.NNHash(mc_ray, 6, epsilon_rel)
-    tree = IntervalTree([Interval(l, u, d) for l, u, d in interval2part if l < u])
+    offset2part = start_indices_to_interval_tree(part2offset, total_mcs)
 
     proposals = set()
     #get all coincident mate connectors
     for i,ray in enumerate(mc_ray):
         nearest = rayhash.get_nearest_points(ray)
-        part_index = next(iter(tree[i])).data
+        part_index = offset2part[i]
         for j in nearest:
-            other_part_index = next(iter(tree[j])).data
+            other_part_index = offset2part[j]
             if other_part_index != part_index:
                 pi1, pi2 = part_index, other_part_index
                 mci1, mci2 = i - part2offset[part_index], j - part2offset[other_part_index]
@@ -143,10 +140,10 @@ def mate_proposals(parts, epsilon_rel=0.001, max_groups=10):
             nearest_coplanar = coplanar_hash.get_nearest_points(z_quat[igroup])
             nearest = list(nearest_coaxial.union(nearest_coplanar))
             i = same_dir_inds[igroup]
-            part_index = next(iter(tree[i])).data
+            part_index = offset2part[i]
             for jgroup in nearest:
                 j = same_dir_inds[jgroup]
-                other_part_index = next(iter(tree[j])).data
+                other_part_index = offset2part[j]
                 if other_part_index != part_index:
                     pi1, pi2 = part_index, other_part_index
                     mci1, mci2 = i - part2offset[part_index], j - part2offset[other_part_index]

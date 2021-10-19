@@ -1,6 +1,50 @@
 import numpy as np
 import numba
 from numba import jit, njit
+from intervaltree import IntervalTree, Interval
+import pspart
+
+class SingleIntervalTree:
+    def __init__(self, tree):
+        self.tree = tree
+    
+    def __getitem__(self, ind):
+        return next(iter(self.tree[ind])).data
+
+def start_indices_to_interval_tree(indices, size):
+    """
+    Returns a data structure which, given an index, returns the id of the interval delimited by `indices` in which that index lies.
+    """
+    interval2part = []
+    for i in range(len(indices)-1):
+        interval2part.append((indices[i], indices[i+1], i))
+    interval2part.append((indices[-1], size, len(indices)-1))
+    return SingleIntervalTree(IntervalTree([Interval(l, u, d) for l, u, d in interval2part if l < u]))
+
+def find_neighbors(points1, points2, dim, eps):
+    """
+    Get a list of pairs of indices (i1, i2) of points in each set that are within eps of each other
+    """
+    N1 = len(points1)
+    N2 = len(points2)
+    swap = False
+    #smaller set is at the end, and used as query
+    if N1 < N2:
+        swap = True
+        N1, N2 = N2, N1
+        points1, points2 = points2, points1
+    points_all = points1 + points2
+    hash = pspart.NNHash(points_all, dim, eps)
+    matches = []
+    for i,point in enumerate(points2):
+        neighbors = hash.get_nearest_points(point)
+        neighbors_other = [n for n in neighbors if n < N1]
+        for n in neighbors_other:
+            matches.append((n, i))
+    if swap:
+        matches = [(match[1], match[0]) for match in matches]
+    return matches
+
 
 def joinmeshes(meshes):
     F = []
@@ -127,3 +171,13 @@ def connected_components(adj, connectionType = 'any'):
                             if ne == 1:
                                 frontier.append(i)
     return components
+
+if __name__ == '__main__':
+    points1 = np.random.randn(10, 2)
+    points2 = points1[6:, :]
+
+    matches = find_neighbors(list(points1), list(points2), 2, 0.0001)
+    assert(matches == [(6, 0), (7, 1), (8, 2), (9, 3)])
+
+    matches = find_neighbors(list(points2), list(points1), 2, 0.0001)
+    assert(matches == [(0, 6), (1, 7), (2, 8), (3, 9)])
