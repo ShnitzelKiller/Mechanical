@@ -114,6 +114,7 @@ class AssemblyInfo:
 
         #criteria:
         # - fastens: Any mate connectors which coincide up to xy rotations (because of the above) will do
+        # - balls: Any mate connectors with the same origin as the mate origin will do
         # - sliders: Any mate connectors along a parallel axis will do
         # - revolute: Any mate connectors with coincident origins along the rotational axis will do
         # - cylindrical: Any mate connectors along the rotational axis will do
@@ -143,6 +144,9 @@ class AssemblyInfo:
         
         if mate.type == 'FASTENED':
             matches = find_neighbors(*[[np.concatenate([origin, rot[:,2]]) for origin, rot in zip(self.mc_origins_all[ind], self.mc_rots_homogenized_all[ind])] for ind in part_indices], 6, self.epsilon_rel)
+        elif mate.type == 'BALL':
+            same_origin_inds = [self.mco_hashes[ind].get_nearest_points(mate_origins[0]) for ind in part_indices]
+            matches = [(i, j) for i in same_origin_inds[0] for j in same_origin_inds[1]]
         else:
             xy_plane = mate_rots_homogenized[0][:,:2]
             z_dir = mate_rots_homogenized[0][:,2]
