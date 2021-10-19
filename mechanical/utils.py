@@ -33,13 +33,11 @@ def find_neighbors(points1, points2, dim, eps):
         swap = True
         N1, N2 = N2, N1
         points1, points2 = points2, points1
-    points_all = points1 + points2
-    hash = pspart.NNHash(points_all, dim, eps)
+    hash = pspart.NNHash(points1, dim, eps)
     matches = []
     for i,point in enumerate(points2):
         neighbors = hash.get_nearest_points(point)
-        neighbors_other = [n for n in neighbors if n < N1]
-        for n in neighbors_other:
+        for n in neighbors:
             matches.append((n, i))
     if swap:
         matches = [(match[1], match[0]) for match in matches]
