@@ -116,10 +116,10 @@ class AssemblyInfo:
         # - sliders: Any mate connectors along a parallel axis will do
         # - revolute: Any mate connectors with coincident origins along the rotational axis will do
         # - cylindrical: Any mate connectors along the rotational axis will do
-        # - planar: Any mate connectors with coincident xy planes will do
-        # - parallel: Any mate connectors with the same z axis (up to sign) will do (this one may be excessive without some more pruning)
+        # - planar: Any mate connectors with coincident xy planes parallel to the mate plane will do
+        # - parallel: Any mate connectors with the same z axis (up to sign) as the mate frame will do (this one may be excessive without some more pruning)
         # - pin slots: Unsupported for now
-        
+
         epsilon_rel2 = self.epsilon_rel * self.epsilon_rel
 
         if len(mate.matedEntities) != 2:
