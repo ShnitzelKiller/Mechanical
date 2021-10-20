@@ -1,9 +1,9 @@
 import os
-from pspart import Part
-from pspart import NNHash
+from pspart import Part, NNHash
 import numpy as np
-from mate_proposals import mate_proposals, homogenize_frame
-from utils import find_neighbors
+from utils import find_neighbors, inter_group_matches, cluster_points, sizes_to_interval_tree, homogenize_frame
+from scipy.spatial.transform import Rotation as R
+
 
 def global_bounding_box(parts, transforms=None):
     if transforms is None:
@@ -76,16 +76,21 @@ class AssemblyInfo:
         p_normalized[:3,3] = -self.median
         p_normalized[3,3] = self.maxdim #todo: figure out if this is double the factor
 
-        self.norm_matrices = [p_normalized @ tf for tf in transforms]
-        self.normalized_parts = [Part(cached_part, mat) for cached_part, mat in zip(self.part_caches, self.norm_matrices)]
+        norm_matrices = [p_normalized @ tf for tf in transforms]
+        self.normalized_parts = [Part(cached_part, mat) for cached_part, mat in zip(self.part_caches, norm_matrices)]
         
+        #these may change if we choose to handle transforms differently. TODO if changing: also handle the epsilons/scaling thresholds!
+        self.mate_transforms = norm_matrices
+        self.part_transforms = [np.identity(4) for part in self.normalized_parts]
+
         #analyze mate connectors
-        for part in self.normalized_parts:
+        for tf,part in zip(self.part_transforms, self.normalized_parts):
             mc_origins = []
             mc_rots = []
             for mc in part.all_mate_connectors:
                 cs = mc.get_coordinate_system()
-                origin, rot = cs_to_origin_frame(cs)
+                cs_transformed = tf @ cs
+                origin, rot = cs_to_origin_frame(cs_transformed)
                 mc_origins.append(origin)
                 mc_rots.append(rot)
 
@@ -101,6 +106,7 @@ class AssemblyInfo:
             self.mco_hashes.append(origin_hash)
             self.mcz_hashes.append(z_hash)
             self.mcr_hashes.append(ray_hash)
+        
         
 
 
@@ -136,7 +142,7 @@ class AssemblyInfo:
             origin_local = me[1][0]
             frame_local = me[1][1]
             cs = cs_from_origin_frame(origin_local, frame_local)
-            cs_transformed = self.norm_matrices[partIndex] @ cs
+            cs_transformed = self.mate_transforms[partIndex] @ cs
             origin, rot = cs_to_origin_frame(cs_transformed)
             rot_homogenized = homogenize_frame(rot, z_flip_only=True)
             mate_origins.append(origin)
@@ -188,6 +194,8 @@ class AssemblyInfo:
                 raise ValueError
         return matches
 
+    def num_mate_connectors(self):
+        return sum([len(origins) for origins in self.mc_origins_all])
     
     def num_invalid_parts(self):
         return sum([not npart.valid for npart in self.normalized_parts])
@@ -218,13 +226,55 @@ class AssemblyInfo:
                     #num_normalized_parts_with_different_mcs += 1
                     num_discrepancies += 1
         return num_discrepancies
+    
+    def mate_proposals(self, max_z_groups=10):
+        """
+        Find list of (part1, part2, mc1, mc2) of probable mate locations
+        `max_z_groups`: maximum number of clusters of mate connector z directions to consider as possible axes
+        """
+        mc_counts = [len(mcos) for mcos in self.mc_origins_all]
+        
+        offset2part = sizes_to_interval_tree(mc_counts)
+        part2offset = [0] + mc_counts[:-1]
+
+        flattened_origins = [origin for mc_origins in self.mc_origins_all for origin in mc_origins]
+        flattened_rots = [rot for mc_rots in self.mc_rots_homogenized_all for rot in mc_rots]
+        mc_axis = [rot[:,2] for rot in flattened_rots]
+        mc_ray = [np.concatenate([origin, axis]) for origin, axis in zip(flattened_origins, mc_axis)]
+        mc_quat = [R.from_matrix(rot).as_quat() for rot in flattened_rots]
+        proposals = inter_group_matches(mc_counts, mc_ray, 6, self.epsilon_rel)
+
+        #for each axial cluster, find nearest neighbors of projected set of frames with the same axis direction
+        axis_hash = NNHash(mc_axis, 3, self.epsilon_rel)
+        clusters = cluster_points(axis_hash, mc_axis)
+        group_indices = list(clusters)
+        group_indices.sort(key=lambda k: clusters[k], reverse=True)
+        for ind in group_indices[:max_z_groups]:
+            # print('processing group',ind,':',result[ind])
+            proj_dir = mc_axis[ind]
+            same_dir_inds = list(axis_hash.get_nearest_points(proj_dir))
+            index_map = lambda x: same_dir_inds[x]
+            xy_plane = flattened_rots[ind][:,:2]
+            # print('projecting to find axes')
+            subset_stacked = np.array([flattened_origins[i] for i in same_dir_inds])
+            projected_origins = list(subset_stacked @ xy_plane)
+            axial_proposals = inter_group_matches(mc_counts, projected_origins, 2, self.epsilon_rel, point_to_grouped_map=index_map)
+            proposals = proposals.union(axial_proposals)
+            # print('projecting to find planes')
+            projected_z = list(subset_stacked @ proj_dir)
+            z_quat = [np.concatenate([mc_quat[same_dir_ind], [z_dist]]) for same_dir_ind, z_dist in zip(same_dir_inds, projected_z)]
+            planar_proposals = inter_group_matches(mc_counts, z_quat, 5, self.epsilon_rel, point_to_grouped_map=index_map)
+            proposals = proposals.union(planar_proposals)
+        return proposals
+
 
 
 if __name__ == '__main__':
     import onshape.brepio as brepio
     datapath = '/projects/grail/benjones/cadlab'
     loader = brepio.Loader(datapath)
-    geo, mates = loader.load_flattened('4a6425e414eac5bfb60c666b_7b79fa9711d3c7e04a4e73b4_1474f34c51b93e9d12776a28.json', skipInvalid=True, geometry=False)
+    #geo, mates = loader.load_flattened('87688bb8ccd911995ddc048c_6313170efcc25a6f36e56906_8ee5e722ed4853b12db03877.json', skipInvalid=True, geometry=False)
+    geo, mates = loader.load_flattened('e4803faed1b9357f8db3722c_ce43730c0f1758f756fc271f_c00b5256d7e874e534c083e8.json', skipInvalid=True, geometry=False)
     occ_ids = list(geo.keys())
     part_paths = []
     transforms = []
@@ -235,6 +285,12 @@ if __name__ == '__main__':
         transforms.append(geo[id][0])
 
     assembly_info = AssemblyInfo(part_paths, transforms, occ_ids)
+    print('mate connectors:',assembly_info.num_mate_connectors())
+
     for mate in mates:
         matches = assembly_info.find_mated_pairs(mate)
         print('matches for mate',mate.name,':',len(matches))
+    
+    proposals = assembly_info.mate_proposals()
+    print(len(proposals))
+    print(set([match[:2] for match in proposals]))

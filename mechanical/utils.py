@@ -4,6 +4,69 @@ from numba import jit, njit
 from intervaltree import IntervalTree, Interval
 import pspart
 
+@njit
+def homogenize_sign(vec):
+    maxdim = -1
+    maxabs = 0
+    for i in range(len(vec)):
+        vecabs = abs(vec[i])
+        if vecabs > maxabs:
+            maxabs = vecabs
+            maxdim = i
+    if vec[maxdim] < 0:
+        return -vec, True
+    else:
+        return vec.copy(), False
+
+@njit
+def vec3_tuple(vec):
+    return (vec[0],vec[1],vec[2])
+
+@njit
+def tuple_vec3(vec,tup):
+    vec[0] = tup[0]
+    vec[1] = tup[1]
+    vec[2] = tup[2]
+    return vec
+
+@njit
+def homogenize_frame(frame, z_flip_only=True):
+    #homogenized x and y can only differ by a swap if the z axes of two orthogonally rotated frames differ only by sign
+    x, _ = homogenize_sign(frame[:,0])
+    y, _ = homogenize_sign(frame[:,1])
+    z, _ = homogenize_sign(frame[:,2])
+
+    if z_flip_only:
+        vectors = sorted([vec3_tuple(x),vec3_tuple(y)])
+        z_final = z
+        x_final = tuple_vec3(x,vectors[0])
+    else:
+        vectors = sorted([vec3_tuple(x),vec3_tuple(y),vec3_tuple(z)])
+        z_final = tuple_vec3(z,vectors[0])
+        x_final = tuple_vec3(x,vectors[1])
+
+    y_final = np.cross(z_final,x_final)
+
+    frame_out = np.empty_like(frame)
+    frame_out[:,0] = x_final
+    frame_out[:,1] = y_final
+    frame_out[:,2] = z_final
+    return frame_out
+
+def cluster_points(nnhash, points):
+    """
+    Returns a dictionary from a representative element index in each cluster to the number of elements in that cluster.
+    """
+    visited = set()
+    clusters = dict()
+    for i,point in enumerate(points):
+        if i not in visited:
+            nearest = nnhash.get_nearest_points(point)
+            visited.add(i)
+            visited = visited.union(nearest)
+            clusters[i] = len(nearest)
+    return clusters
+
 class SingleIntervalTree:
     def __init__(self, tree):
         self.tree = tree
@@ -11,14 +74,17 @@ class SingleIntervalTree:
     def __getitem__(self, ind):
         return next(iter(self.tree[ind])).data
 
-def start_indices_to_interval_tree(indices, size):
+def sizes_to_interval_tree(sizes):
     """
     Returns a data structure which, given an index, returns the id of the interval delimited by `indices` in which that index lies.
     """
     interval2part = []
-    for i in range(len(indices)-1):
-        interval2part.append((indices[i], indices[i+1], i))
-    interval2part.append((indices[-1], size, len(indices)-1))
+    offset = 0
+    for i,size in enumerate(sizes):
+        newoffset = offset + size
+        interval2part.append((offset, newoffset, i))
+        offset = newoffset
+    
     return SingleIntervalTree(IntervalTree([Interval(l, u, d) for l, u, d in interval2part if l < u]))
 
 def find_neighbors(points1, points2, dim, eps):
@@ -43,6 +109,37 @@ def find_neighbors(points1, points2, dim, eps):
         matches = [(match[1], match[0]) for match in matches]
     return matches
 
+def inter_group_matches(group_sizes, points, dim, eps, hash=None, point_to_grouped_map=None):
+    """
+    Given a list of N `dim`-dimensional points, and a list of sizes of k consecutive groups, return a list of all matching pairs of points between different
+    groups, in the form (group1, group2, ind1, ind2), where ind1 and ind2 are with respect to the corresponding groups' offset in the point array.
+    if `hash` is defined, use an existing spatial hash map
+    if `point_to_grouped_map` is defined, the group sizes will pertain to the output space of the map
+    """
+    if point_to_grouped_map is None:
+        point_to_grouped_map = lambda x: x
+    start_indices = [0] + group_sizes[:-1]
+    if hash is None:
+        hash = pspart.NNHash(points, dim, eps)
+    offset2group = sizes_to_interval_tree(group_sizes)
+    proposals = set()
+    #get all coincident mate connectors
+    for i,point in enumerate(points):
+        nearest = hash.get_nearest_points(point)
+        iglobal = point_to_grouped_map(i)
+        group_index = offset2group[iglobal]
+        for j in nearest:
+            if j != i:
+                jglobal = point_to_grouped_map(j)
+                other_group_index = offset2group[jglobal]
+                if other_group_index != group_index:
+                    pi1, pi2 = group_index, other_group_index
+                    mci1, mci2 = iglobal - start_indices[group_index], jglobal - start_indices[other_group_index]
+                    if pi1 > pi2:
+                        pi1, pi2 = pi2, pi1
+                        mci1, mci2 = mci2, mci1
+                    proposals.add((pi1, pi2, mci1, mci2))
+    return proposals
 
 def joinmeshes(meshes):
     F = []
@@ -171,6 +268,18 @@ def connected_components(adj, connectionType = 'any'):
     return components
 
 if __name__ == '__main__':
+    points = np.random.randn(10, 2)
+    points1 = points[:6, :]
+    points2 = points[3:, :]
+    points_all = np.vstack([points1, points2])
+    matches = inter_group_matches([6, 7], points_all, 2, 0.0001)
+    assert(matches == {(0, 1, 5, 2), (0, 1, 3, 0), (0, 1, 4, 1)})
+    group_sizes = [100, 100]
+    group_to_offset = [0] + group_sizes
+    point_to_grouped_map = lambda i: i+1 if i < 6 else i + 150 - 6
+    matches = inter_group_matches(group_sizes, points_all, 2, 0.0001, point_to_grouped_map=point_to_grouped_map)
+    assert(matches == {(0, 1, 5, 51), (0, 1, 4, 50), (0, 1, 6, 52)})
+
     points1 = np.random.randn(10, 2)
     points2 = points1[6:, :]
 
