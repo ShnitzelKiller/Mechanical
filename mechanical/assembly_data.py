@@ -9,6 +9,7 @@ from pspart import Part, NNHash
 from utils import find_neighbors, inter_group_matches, cluster_points, sizes_to_interval_tree, homogenize_frame
 from scipy.spatial.transform import Rotation as R
 from automate.nn.sbgcn import BrepGraphData
+import torch_scatter
 
 
 mate_types = [
@@ -60,12 +61,13 @@ def _transform_matches(matches, index_maps):
 
 class AssemblyInfo:
 
-    def __init__(self, part_paths, transforms, occ_ids, epsilon_rel=0.001, use_uvnet_features=False):
+    def __init__(self, part_paths, transforms, occ_ids, epsilon_rel=0.001, use_uvnet_features=False, max_topologies=10000):
         self.epsilon_rel = epsilon_rel
         self.use_uvnet_features = use_uvnet_features
         self.part_paths = part_paths
         self.part_caches = []
         self.parts = []
+        self.occ_transforms = transforms
         self.occ_to_index = {}
         self.occ_ids = occ_ids
         self.mc_origins_all = []
@@ -86,26 +88,41 @@ class AssemblyInfo:
                 self.parts.append(part)
                 self.occ_to_index[occ_ids[j]] = j
 
-        self.bbox = global_bounding_box(self.parts, transforms)
-        if self.bbox is None:
-            raise ValueError('invalid bounding box')
-        
-        minPt, maxPt = self.bbox
-        self.median = self.bbox.mean(axis=0)
-        dims = maxPt - minPt
-        self.maxdim = max(dims)
+        self.stats['initialized'] = False
+        self.stats['too_big'] = self.num_topologies() > max_topologies
+        if not self.stats['too_big']:
 
+            self.bbox = global_bounding_box(self.parts, transforms)
+            self.stats['invalid_bbox'] = self.bbox is None
+            
+            if not self.bbox is None:
+                self.stats['initialized'] = True
+                minPt, maxPt = self.bbox
+                self.median = self.bbox.mean(axis=0)
+                dims = maxPt - minPt
+                self.maxdim = max(dims)
+                self.stats['maxdim'] = self.maxdim
+
+                self.transform_parts()
+                
+                #these may change if we choose to handle transforms differently. TODO if changing: also handle the epsilons/scaling thresholds!
+                self.mate_transforms = self.norm_matrices
+                self.part_transforms = [np.identity(4) for part in self.normalized_parts]
+
+                self.populate_hashes()
+        
+        
+
+    def transform_parts(self):
         p_normalized = np.identity(4, dtype=float)
         p_normalized[:3,3] = -self.median
         p_normalized[3,3] = self.maxdim #todo: figure out if this is double the factor
 
-        norm_matrices = [p_normalized @ tf for tf in transforms]
-        self.normalized_parts = [Part(cached_part, mat, uv_features=use_uvnet_features) for cached_part, mat in zip(self.part_caches, norm_matrices)]
-        
-        #these may change if we choose to handle transforms differently. TODO if changing: also handle the epsilons/scaling thresholds!
-        self.mate_transforms = norm_matrices
-        self.part_transforms = [np.identity(4) for part in self.normalized_parts]
+        self.norm_matrices = [p_normalized @ tf for tf in self.occ_transforms]
+        self.normalized_parts = [Part(cached_part, mat, uv_features=self.use_uvnet_features) for cached_part, mat in zip(self.part_caches, self.norm_matrices)]
 
+
+    def populate_hashes(self):
         #analyze mate connectors
         for tf,part in zip(self.part_transforms, self.normalized_parts):
             mc_origins = []
@@ -123,13 +140,12 @@ class AssemblyInfo:
             self.mc_rots_homogenized_all.append(mc_rots_homogenized)
 
             mc_rays = [np.concatenate([origin,rot[:,2]]) for origin, rot in zip(mc_origins, mc_rots_homogenized)]
-            origin_hash = NNHash(mc_origins, 3, epsilon_rel)
-            z_hash = NNHash([rot[:,2] for rot in mc_rots_homogenized], 3, epsilon_rel)
-            ray_hash = NNHash(mc_rays, 6, epsilon_rel)
+            origin_hash = NNHash(mc_origins, 3, self.epsilon_rel)
+            z_hash = NNHash([rot[:,2] for rot in mc_rots_homogenized], 3, self.epsilon_rel)
+            ray_hash = NNHash(mc_rays, 6, self.epsilon_rel)
             self.mco_hashes.append(origin_hash)
             self.mcz_hashes.append(z_hash)
             self.mcr_hashes.append(ray_hash)
-
 
     def find_mated_pairs(self, mate):
         """
@@ -222,7 +238,7 @@ class AssemblyInfo:
         return sum([len(origins) for origins in self.mc_origins_all])
 
     def num_topologies(self):
-        return sum([part.num_topologies for part in self.normalized_parts])
+        return sum([part.num_topologies for part in self.parts])
     
     def num_invalid_parts(self):
         return sum([not npart.valid for npart in self.normalized_parts])
@@ -313,7 +329,7 @@ class AssemblyInfo:
         mc_ray = [np.concatenate([origin, axis]) for origin, axis in zip(flattened_origins, mc_axis)]
         mc_quat = [R.from_matrix(rot).as_quat() for rot in flattened_rots]
         matches = inter_group_matches(mc_counts, mc_ray, 6, self.epsilon_rel)
-        coincident_proposals = self._matches_to_proposals(matches, 0)
+        coincident_proposals = self._matches_to_proposals(matches, 1)
 
         all_axial_proposals = []
         all_planar_proposals = []
@@ -333,14 +349,14 @@ class AssemblyInfo:
             subset_stacked = np.array([flattened_origins[i] for i in same_dir_inds])
             projected_origins = list(subset_stacked @ xy_plane)
             axial_matches = inter_group_matches(mc_counts, projected_origins, 2, self.epsilon_rel, point_to_grouped_map=index_map)
-            axial_proposals = self._matches_to_proposals(axial_matches, 1)
+            axial_proposals = self._matches_to_proposals(axial_matches, 2)
             all_axial_proposals.append(axial_proposals)
             
             # print('projecting to find planes')
             projected_z = list(subset_stacked @ proj_dir)
             z_quat = [np.concatenate([mc_quat[same_dir_ind], [z_dist]]) for same_dir_ind, z_dist in zip(same_dir_inds, projected_z)]
             planar_matches = inter_group_matches(mc_counts, z_quat, 5, self.epsilon_rel, point_to_grouped_map=index_map)
-            planar_proposals = self._matches_to_proposals(planar_matches, 2)
+            planar_proposals = self._matches_to_proposals(planar_matches, 3)
             all_planar_proposals.append(planar_proposals)
         
         all_proposals = self._join_proposals(*all_planar_proposals)
@@ -390,6 +406,14 @@ class AssemblyInfo:
         proposal_start = time.time()
         proposals = self.mate_proposals(max_z_groups=max_z_groups)
         self.stats['proposal_time'] = time.time() - proposal_start
+        self.stats['num_proposals'] = len(proposals)
+
+        #record "pooled" proposal stats for each part pair
+        # proposals_pooled = dict()
+        # for part_pair in proposals:
+        #     mc_dict = proposals[part_pair]
+        #     best_mc_pair = min(mc_dict, key=lambda x: mc_dict[x][1])
+        #     proposals_pooled[part_pair] = mc_dict[best_mc_pair]
 
         #record any ground truth mates that agree with the proposals
         match_start = time.time()
@@ -492,13 +516,24 @@ class AssemblyInfo:
                 col_index += 1
 
         assert(col_index == len(pair_indices_final))
-        
         self.stats['conversion_time'] = time.time() - conversion_start
 
+        scatter_start = time.time()
+        N = len(self.parts)
+        assert(N > 0)
+
+        graph_ids = batch.graph_idx.flatten()
+        mc_part_0 = graph_ids[batch.mc_pairs[0,:]]
+        mc_part_1 = graph_ids[batch.mc_pairs[3,:]]
+        part_pair_ids = mc_part_0 * N + mc_part_1
+        scattered_part_pair_features = torch_scatter.scatter(src=torch.cat([batch.mc_proposal_feat, mc_part_0.unsqueeze(0), mc_part_1.unsqueeze(0)]), index=part_pair_ids, dim=1, reduce="min")
+        batch.part_pair_feats = scattered_part_pair_features[:,scattered_part_pair_features[0].nonzero().flatten()]
+        
+        self.stats['scatter_time'] = time.time() - scatter_start
         return batch
 
 #test that this assembly has all mates matched and found by heuristics
-if __name__ == '__main__2':
+if __name__ == '__main__':
     import onshape.brepio as brepio
     datapath = '/projects/grail/benjones/cadlab'
     loader = brepio.Loader(datapath)
@@ -518,7 +553,7 @@ if __name__ == '__main__2':
     assert(all([mate_stat['found_by_heuristic'] for mate_stat in assembly_info.mate_stats]))
 
 
-if __name__ == '__main__':
+if __name__ == '__main__2':
     import onshape.brepio as brepio
     datapath = '/projects/grail/benjones/cadlab'
     loader = brepio.Loader(datapath)
