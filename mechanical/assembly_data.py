@@ -1,5 +1,6 @@
 import os
 import random
+import time
 import numpy as np
 import numpy.linalg as LA
 import torch
@@ -8,6 +9,7 @@ from pspart import Part, NNHash
 from utils import find_neighbors, inter_group_matches, cluster_points, sizes_to_interval_tree, homogenize_frame
 from scipy.spatial.transform import Rotation as R
 from automate.nn.sbgcn import BrepGraphData
+
 
 mate_types = [
             'PIN_SLOT',
@@ -73,6 +75,7 @@ class AssemblyInfo:
         self.mcz_hashes = [] #spatial hashes of homogenized z direction
         self.mcr_hashes = [] #spatial hashes of origin + homogenized z dir
         self.stats = dict()
+        self.mate_stats = []
 
         for j,path in enumerate(part_paths):
             assert(os.path.isfile(path))
@@ -174,7 +177,7 @@ class AssemblyInfo:
         else:
             xy_plane = mate_rots_homogenized[0][:,:2]
             z_dir = mate_rots_homogenized[0][:,2]
-            same_dir_inds = [self.mcz_hashes[ind].get_nearest_points(z_dir) for ind in part_indices]
+            same_dir_inds = [list(self.mcz_hashes[ind].get_nearest_points(z_dir)) for ind in part_indices]
             subset_stacked = [np.array([self.mc_origins_all[ind][i] for i in same_dir_inds_i]) for ind, same_dir_inds_i in zip(part_indices, same_dir_inds)]
             if mate.type == 'CYLINDRICAL' or mate.type == 'REVOLUTE' or mate.type == 'SLIDER':
                 projected_origins = [list(subset_stacked_i @ xy_plane) for subset_stacked_i in subset_stacked] #origins of mcfs with the same z direction projected onto a shared xy plane
@@ -384,9 +387,13 @@ class AssemblyInfo:
             offset += part.num_topologies
             part2offset[i+1] = offset
 
+        proposal_start = time.time()
         proposals = self.mate_proposals(max_z_groups=max_z_groups)
+        proposal_duration = time.time() - proposal_start
+        self.stats['proposal_time'] = proposal_duration
 
         #record any ground truth mates that agree with the proposals
+        match_start = time.time()
         missed_mates = 0
         missed_part_pairs = 0
         for i,(mate, mate_stat) in enumerate(zip(mates, self.mate_stats)):
@@ -411,10 +418,13 @@ class AssemblyInfo:
                 missed_part_pairs += 1
             if not mate_stat['found_by_heuristic']:
                 missed_mates += 1
-            
+        match_duration = time.time() - match_start
+        self.stats['match_time'] = match_duration
         self.stats['missed_mates'] = missed_mates
         self.stats['missed_part_pairs'] = missed_part_pairs
 
+
+        truncation_start = time.time()
         mc_keys = []
         for part_pair in proposals:
             for mc_pair in proposals[part_pair]:
@@ -438,13 +448,18 @@ class AssemblyInfo:
             self.stats['truncated_mc_pairs'] = False
             pair_indices_final = list(range(len(mc_keys)))
 
+        truncation_duration = time.time() - truncation_start
+        self.stats['truncation_time'] = truncation_duration
+        
         #add mc_pairs, mc_pair_type, and mc_pair_labels sets to assembly data
         #mc_pairs data we want is:
         # - or1, loc1, type1, or2, loc2, type2, proposal type, euclidian distance
+        conversion_start = time.time()
         batch.mc_pairs = torch.empty((6, len(pair_indices_final)), dtype=torch.int64)
         batch.mc_proposal_feat = torch.empty((2, len(pair_indices_final)), dtype=torch.float32)
         batch.mc_pair_labels = torch.zeros(len(pair_indices_final), dtype=torch.float32)
         batch.mc_pair_type = torch.zeros(len(pair_indices_final), dtype=torch.int64)
+        
         for col_index, i in enumerate(pair_indices_final):
             part_pair, mc_pair, mateId = mc_keys[i]
             mcs = [self.normalized_parts[pi].all_mate_connectors[mci] for pi, mci in zip(part_pair, mc_pair)]
@@ -458,11 +473,14 @@ class AssemblyInfo:
             if mateId >= 0:
                 batch.mc_pair_labels[col_index] = 1
                 batch.mc_pair_type[col_index] = mate_types.index(mates[mateId].type)
-    
+        
+        conversion_duration = time.time() - conversion_start
+        self.stats['conversion_time'] = conversion_duration
+
         return batch
 
 #test that this assembly has all mates matched and found by heuristics
-if __name__ == '__main__':
+if __name__ == '__main__2':
     import onshape.brepio as brepio
     datapath = '/projects/grail/benjones/cadlab'
     loader = brepio.Loader(datapath)
@@ -482,12 +500,12 @@ if __name__ == '__main__':
     assert(all([mate_stat['found_by_heuristic'] for mate_stat in assembly_info.mate_stats]))
 
 
-if __name__ == '__main__2':
+if __name__ == '__main__':
     import onshape.brepio as brepio
     datapath = '/projects/grail/benjones/cadlab'
     loader = brepio.Loader(datapath)
     #geo, mates = loader.load_flattened('87688bb8ccd911995ddc048c_6313170efcc25a6f36e56906_8ee5e722ed4853b12db03877.json', skipInvalid=True, geometry=False)
-    geo, mates = loader.load_flattened('e4803faed1b9357f8db3722c_ce43730c0f1758f756fc271f_c00b5256d7e874e534c083e8.json', skipInvalid=True, geometry=False)
+    geo, mates = loader.load_flattened('e04c8a49d30adb3a5c0f1deb_3d9b45359a15b248f75e41a2_070617843f30f132ab9e6661.json', skipInvalid=True, geometry=False)
     occ_ids = list(geo.keys())
     part_paths = []
     transforms = []
@@ -503,10 +521,10 @@ if __name__ == '__main__2':
 
     batch = assembly_info.create_batches(mates)
 
-    for mate in mates:
-        part1, part2, matches = assembly_info.find_mated_pairs(mate)
-        print('matches for mate',mate.name,'(', part1, part2,'):',len(matches))
+    # for mate in mates:
+    #     part1, part2, matches = assembly_info.find_mated_pairs(mate)
+    #     print('matches for mate',mate.name,'(', part1, part2,'):',len(matches))
     
-    proposals = assembly_info.mate_proposals()
-    print(sum([len(proposals[part_pair]) for part_pair in proposals]))
-    print(set([part_pair for part_pair in proposals]))
+    # proposals = assembly_info.mate_proposals()
+    # print(sum([len(proposals[part_pair]) for part_pair in proposals]))
+    # print(set([part_pair for part_pair in proposals]))
