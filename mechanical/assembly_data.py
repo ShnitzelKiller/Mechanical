@@ -1,10 +1,13 @@
 import os
-from pspart import Part, NNHash
+import random
 import numpy as np
 import numpy.linalg as LA
+import torch
+from torch_geometric.data import Batch
+from pspart import Part, NNHash
 from utils import find_neighbors, inter_group_matches, cluster_points, sizes_to_interval_tree, homogenize_frame
 from scipy.spatial.transform import Rotation as R
-
+from automate.nn.sbgcn import BrepGraphData
 
 def global_bounding_box(parts, transforms=None):
     if transforms is None:
@@ -39,10 +42,14 @@ def cs_from_origin_frame(origin, frame):
     cs[:3,3] = origin
     return cs
 
+def _transform_matches(matches, index_maps):
+    return [(index_maps[0][match[0]], index_maps[1][match[1]]) for match in matches]
+
 class AssemblyInfo:
 
     def __init__(self, part_paths, transforms, occ_ids, epsilon_rel=0.001, use_uvnet_features=False):
         self.epsilon_rel = epsilon_rel
+        self.use_uvnet_features = use_uvnet_features
         self.part_paths = part_paths
         self.part_caches = []
         self.parts = []
@@ -54,6 +61,7 @@ class AssemblyInfo:
         self.mco_hashes = [] #spatial hashes of origins
         self.mcz_hashes = [] #spatial hashes of homogenized z direction
         self.mcr_hashes = [] #spatial hashes of origin + homogenized z dir
+        self.stats = dict()
 
         for j,path in enumerate(part_paths):
             assert(os.path.isfile(path))
@@ -107,8 +115,6 @@ class AssemblyInfo:
             self.mco_hashes.append(origin_hash)
             self.mcz_hashes.append(z_hash)
             self.mcr_hashes.append(ray_hash)
-        
-        
 
 
     def find_mated_pairs(self, mate):
@@ -163,7 +169,8 @@ class AssemblyInfo:
                 projected_origins = [list(subset_stacked_i @ xy_plane) for subset_stacked_i in subset_stacked] #origins of mcfs with the same z direction projected onto a shared xy plane
                 
                 if mate.type == 'SLIDER':
-                    matches = find_neighbors(*projected_origins, 2, self.epsilon_rel)
+                    matches = find_neighbors(*projected_origins, 2, self.epsilon_rel) #neighbors are found in the subset of same direction mcs
+                    matches = _transform_matches(matches, same_dir_inds)
                 else:
                     mate_origin_proj = mate_origins[0] @ xy_plane
                     axial_indices = []
@@ -180,13 +187,15 @@ class AssemblyInfo:
                     elif mate.type == 'REVOLUTE':
                         subset_axial = [np.array([self.mc_origins_all[ind][i] for i in axial_indices_i]) for ind, axial_indices_i in zip(part_indices, axial_indices)]
                         z_positions = [list((subset_stacked_i @ z_dir)[:,np.newaxis]) for subset_stacked_i in subset_axial]
-                        matches = find_neighbors(*z_positions, 1, self.epsilon_rel)
+                        matches = find_neighbors(*z_positions, 1, self.epsilon_rel) #neighbors are found in the subset of axial mcs
+                        matches = _transform_matches(matches, axial_indices)
                     else:
                         assert(False)
 
             elif mate.type == 'PLANAR':
                 z_positions = [list((subset_stacked_i @ z_dir)[:,np.newaxis]) for subset_stacked_i in subset_stacked]
-                matches = find_neighbors(*z_positions, 1, self.epsilon_rel)
+                matches = find_neighbors(*z_positions, 1, self.epsilon_rel) #neighbors are found in the subset of same direction mcs
+                matches = _transform_matches(matches, same_dir_inds)
             elif mate.type == 'PARALLEL':
                 matches = [(i, j) for i in same_dir_inds[0] for j in same_dir_inds[1]]
             elif mate.type == 'PIN_SLOT':
@@ -197,6 +206,9 @@ class AssemblyInfo:
 
     def num_mate_connectors(self):
         return sum([len(origins) for origins in self.mc_origins_all])
+
+    def num_topologies(self):
+        return sum([part.num_topologies for part in self.normalized_parts])
     
     def num_invalid_parts(self):
         return sum([not npart.valid for npart in self.normalized_parts])
@@ -230,6 +242,10 @@ class AssemblyInfo:
 
 
     def _matches_to_proposals(self, matches, proposal_type):
+        """
+        from a list of matches (part1, part2, mc1, mc2) create a nested dict from part pairs to mc pairs to the proposal data
+        which is of the form [proposal type, euclidian distance between mcs, and pointer to a mate, if any (initialized as empty)]
+        """
         proposals = dict()
         for match in matches:
             part_pair = match[:2]
@@ -240,7 +256,7 @@ class AssemblyInfo:
             else:
                 mc_pairs_dict = proposals[part_pair]
             dist = LA.norm(self.mc_origins_all[part_pair[0]][mc_pair[0]] - self.mc_origins_all[part_pair[1]][mc_pair[1]])
-            mc_pairs_dict[mc_pair] = (proposal_type, dist)
+            mc_pairs_dict[mc_pair] = [proposal_type, dist, -1]
         return proposals
 
     def _join_proposals(self, proposal, *proposals):
@@ -320,14 +336,116 @@ class AssemblyInfo:
         return all_proposals
 
 
-    def create_batches(self, mates, max_topologies=1000, max_z_groups=10):
+    def create_batches(self, mates, max_z_groups=10, max_mc_pairs=100000):
+        """
+        Create a list of batches of BrepData objects for this assembly. Returns False if any part has too many topologies to fit in a batch.
+        """
         
+        self.mate_stats = [dict() for mate in mates]
+        
+        #datalists = []
+        # curr_datalist = []
+        # topo_count = 0
+        # for part in self.normalized_parts:
+        #     if part.num_topologies > max_topologies:
+        #         return None
+        #     topo_count += part.num_topologies
+
+        #     if topo_count > max_topologies:
+        #         datalists.append(curr_datalist)
+        #         curr_datalist = []
+        #         topo_count = 0
+            
+        #     data = BrepGraphData(part, self.use_uvnet_features)
+        #     curr_datalist.append(data)
+        # datalists.append(curr_datalist)
+
+        #batches = [Batch.from_data_list(lst) for lst in datalists]
+
+        batch = Batch.from_data_list([BrepGraphData(part, uvnet_features=self.use_uvnet_features) for part in self.normalized_parts])
+        
+        #proposal indices are local to each part's mate connector set
+        #get mate connector and its topological references, and offset them by the appropriate amount based on where they are in batch
+        part2offset = [0] * len(self.normalized_parts)
+        offset = 0
+        for i,part in enumerate(self.normalized_parts[:-1]):
+            offset += part.num_topologies
+            part2offset[i+1] = offset
+
         proposals = self.mate_proposals(max_z_groups=max_z_groups)
 
-
-        for mate in mates:
+        #record any ground truth mates that agree with the proposals
+        missed_mates = 0
+        missed_part_pairs = 0
+        for i,(mate, mate_stat) in enumerate(zip(mates, self.mate_stats)):
             part1, part2, matches = self.find_mated_pairs(mate)
+            if part1 > part2:
+                part1, part2 = part2, part1
+                matches = [(match[1], match[0]) for match in matches]
+            
+            mate_stat['num_matches'] = len(matches)
+            mate_stat['found_by_heuristic'] = False
 
+            part_pair = part1, part2
+            if part_pair in proposals:
+                num_matches = 0
+                for match in matches:
+                    if match in proposals[part_pair]:
+                        proposals[part_pair][match][2] = i
+                        num_matches += 1
+                if num_matches > 0:
+                    mate_stat['found_by_heuristic'] = True
+            else:
+                missed_part_pairs += 1
+            if not mate_stat['found_by_heuristic']:
+                missed_mates += 1
+            
+        self.stats['missed_mates'] = missed_mates
+        self.stats['missed_part_pairs'] = missed_part_pairs
+
+        mc_keys = []
+        for part_pair in proposals:
+            for mc_pair in proposals[part_pair]:
+                mc_keys.append((part_pair, mc_pair, proposals[part_pair][mc_pair][2]))
+        
+        #truncate mc pairs (keep positive matches, and all others up to the maximum number)
+        if len(mc_keys) > max_mc_pairs:
+            self.stats['truncated_mc_pairs'] = True
+            pair_indices_final=[]
+            pair_indices_false=[]
+            for i,(part_pair, mc_pair, mateIndex) in enumerate(mc_keys):
+                if mateIndex >= 0:
+                    pair_indices_final.append(i)
+                else:
+                    pair_indices_false.append(i)
+            N_true = len(pair_indices_final)
+            N_remainder = max_mc_pairs - N_true
+            random.shuffle(pair_indices_false)
+            pair_indices_final += pair_indices_false[:N_remainder]
+        else:
+            self.stats['truncated_mc_pairs'] = False
+            pair_indices_final = list(range(len(mc_keys)))
+
+        #add mc_pairs, mc_pair_type, and mc_pair_labels sets to assembly data
+        #mc_pairs data we want is:
+        # - or1, loc1, type1, or2, loc2, type2, proposal type, euclidian distance
+        batch.mc_pairs = torch.empty((6, len(pair_indices_final)), dtype=torch.int64)
+        batch.mc_proposal_feat = torch.empty((2, len(pair_indices_final)), dtype=torch.float32)
+        batch.mc_pair_labels = torch.zeros(len(pair_indices_final), dtype=torch.float32)
+        for col_index, i in enumerate(pair_indices_final):
+            part_pair, mc_pair, mateId = mc_keys[i]
+            mcs = [self.normalized_parts[pi].all_mate_connectors[mci] for pi, mci in zip(part_pair, mc_pair)]
+            topo_offsets = [part2offset[partid] for partid in part_pair]
+            batch.mc_pairs[:,col_index] = torch.tensor([mcs[0].orientation_inference.topology_ref + topo_offsets[0], mcs[0].location_inference.topology_ref + topo_offsets[0], mcs[0].location_inference.inference_type.value,
+                          mcs[1].orientation_inference.topology_ref + topo_offsets[1], mcs[1].location_inference.topology_ref + topo_offsets[1], mcs[1].location_inference.inference_type.value], dtype=torch.int64)
+            
+            proposal_feat = proposals[part_pair][mc_pair]
+            batch.mc_proposal_feat[:,col_index] = torch.tensor(proposal_feat[:2], dtype=torch.float32)
+            
+            if mateId >= 0:
+                batch.mc_pair_labels[col_index] = 1
+    
+        return batch
 
 
 if __name__ == '__main__':
@@ -347,6 +465,9 @@ if __name__ == '__main__':
 
     assembly_info = AssemblyInfo(part_paths, transforms, occ_ids)
     print('mate connectors:',assembly_info.num_mate_connectors())
+    print('topologies:', assembly_info.num_topologies())
+
+    batch = assembly_info.create_batches(mates)
 
     for mate in mates:
         part1, part2, matches = assembly_info.find_mated_pairs(mate)
