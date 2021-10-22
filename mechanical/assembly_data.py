@@ -9,6 +9,17 @@ from utils import find_neighbors, inter_group_matches, cluster_points, sizes_to_
 from scipy.spatial.transform import Rotation as R
 from automate.nn.sbgcn import BrepGraphData
 
+mate_types = [
+            'PIN_SLOT',
+            'BALL',
+            'PARALLEL',
+            'SLIDER',
+            'REVOLUTE',
+            'CYLINDRICAL',
+            'PLANAR',
+            'FASTENED'
+        ]
+
 def global_bounding_box(parts, transforms=None):
     if transforms is None:
         allpoints = [part.V for part in parts if part.V.shape[0] > 0]
@@ -362,7 +373,8 @@ class AssemblyInfo:
 
         #batches = [Batch.from_data_list(lst) for lst in datalists]
 
-        batch = Batch.from_data_list([BrepGraphData(part, uvnet_features=self.use_uvnet_features) for part in self.normalized_parts])
+        datalist = [BrepGraphData(part, uvnet_features=self.use_uvnet_features) for part in self.normalized_parts]
+        batch = Batch.from_data_list(datalist)
         
         #proposal indices are local to each part's mate connector set
         #get mate connector and its topological references, and offset them by the appropriate amount based on where they are in batch
@@ -432,6 +444,7 @@ class AssemblyInfo:
         batch.mc_pairs = torch.empty((6, len(pair_indices_final)), dtype=torch.int64)
         batch.mc_proposal_feat = torch.empty((2, len(pair_indices_final)), dtype=torch.float32)
         batch.mc_pair_labels = torch.zeros(len(pair_indices_final), dtype=torch.float32)
+        batch.mc_pair_type = torch.zeros(len(pair_indices_final), dtype=torch.int64)
         for col_index, i in enumerate(pair_indices_final):
             part_pair, mc_pair, mateId = mc_keys[i]
             mcs = [self.normalized_parts[pi].all_mate_connectors[mci] for pi, mci in zip(part_pair, mc_pair)]
@@ -444,11 +457,32 @@ class AssemblyInfo:
             
             if mateId >= 0:
                 batch.mc_pair_labels[col_index] = 1
+                batch.mc_pair_type[col_index] = mate_types.index(mates[mateId].type)
     
         return batch
 
-
+#test that this assembly has all mates matched and found by heuristics
 if __name__ == '__main__':
+    import onshape.brepio as brepio
+    datapath = '/projects/grail/benjones/cadlab'
+    loader = brepio.Loader(datapath)
+    #geo, mates = loader.load_flattened('87688bb8ccd911995ddc048c_6313170efcc25a6f36e56906_8ee5e722ed4853b12db03877.json', skipInvalid=True, geometry=False)
+    geo, mates = loader.load_flattened('e4803faed1b9357f8db3722c_ce43730c0f1758f756fc271f_c00b5256d7e874e534c083e8.json', skipInvalid=True, geometry=False)
+    occ_ids = list(geo.keys())
+    part_paths = []
+    transforms = []
+    for id in occ_ids:
+        path = os.path.join(datapath, 'data/models', *[geo[id][1][k] for k in ['documentId','documentMicroversion','elementId','fullConfiguration']], f'{geo[id][1]["partId"]}.xt')
+        assert(os.path.isfile(path))
+        part_paths.append(path)
+        transforms.append(geo[id][0])
+
+    assembly_info = AssemblyInfo(part_paths, transforms, occ_ids)
+    batch = assembly_info.create_batches(mates)
+    assert(all([mate_stat['found_by_heuristic'] for mate_stat in assembly_info.mate_stats]))
+
+
+if __name__ == '__main__2':
     import onshape.brepio as brepio
     datapath = '/projects/grail/benjones/cadlab'
     loader = brepio.Loader(datapath)
