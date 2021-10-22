@@ -118,7 +118,11 @@ def inter_group_matches(group_sizes, points, dim, eps, hash=None, point_to_group
     """
     if point_to_grouped_map is None:
         point_to_grouped_map = lambda x: x
-    start_indices = [0] + group_sizes[:-1]
+    start_indices = [0] * len(group_sizes)
+    offset = 0
+    for i,size in enumerate(group_sizes[:-1]):
+        offset += size
+        start_indices[i+1] = offset
     if hash is None:
         hash = pspart.NNHash(points, dim, eps)
     offset2group = sizes_to_interval_tree(group_sizes)

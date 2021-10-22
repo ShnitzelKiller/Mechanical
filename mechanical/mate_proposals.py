@@ -3,69 +3,7 @@ import numpy as np
 import numpy.linalg as LA
 from numba import njit
 from scipy.spatial.transform import Rotation as R
-from utils import start_indices_to_interval_tree
-
-
-def cluster_axes(nnhash, axes):
-    visited = set()
-    clusters = dict()
-    for i in range(len(axes)):
-        if i not in visited:
-            nearest = list(nnhash.get_nearest_points(axes[i]))
-            visited.add(i)
-            for n in nearest:
-                visited.add(n)
-            clusters[i] = 1 + len(nearest)
-    return clusters
-
-@njit
-def homogenize_sign(vec):
-    maxdim = -1
-    maxabs = 0
-    for i in range(len(vec)):
-        vecabs = abs(vec[i])
-        if vecabs > maxabs:
-            maxabs = vecabs
-            maxdim = i
-    if vec[maxdim] < 0:
-        return -vec, True
-    else:
-        return vec.copy(), False
-
-@njit
-def vec3_tuple(vec):
-    return (vec[0],vec[1],vec[2])
-
-@njit
-def tuple_vec3(vec,tup):
-    vec[0] = tup[0]
-    vec[1] = tup[1]
-    vec[2] = tup[2]
-    return vec
-
-@njit
-def homogenize_frame(frame, z_flip_only=True):
-    #homogenized x and y can only differ by a swap if the z axes of two orthogonally rotated frames differ only by sign
-    x, _ = homogenize_sign(frame[:,0])
-    y, _ = homogenize_sign(frame[:,1])
-    z, _ = homogenize_sign(frame[:,2])
-
-    if z_flip_only:
-        vectors = sorted([vec3_tuple(x),vec3_tuple(y)])
-        z_final = z
-        x_final = tuple_vec3(x,vectors[0])
-    else:
-        vectors = sorted([vec3_tuple(x),vec3_tuple(y),vec3_tuple(z)])
-        z_final = tuple_vec3(z,vectors[0])
-        x_final = tuple_vec3(x,vectors[1])
-
-    y_final = np.cross(z_final,x_final)
-
-    frame_out = np.empty_like(frame)
-    frame_out[:,0] = x_final
-    frame_out[:,1] = y_final
-    frame_out[:,2] = z_final
-    return frame_out
+from utils import sizes_to_interval_tree, inter_group_matches, cluster_points
 
 
 def mate_proposals(parts, epsilon_rel=0.001, max_groups=10):
@@ -74,11 +12,12 @@ def mate_proposals(parts, epsilon_rel=0.001, max_groups=10):
     `epsilon_fac`: fraction of maximum part dimension to use as epsilon for finding neighboring mate connectors
     """
 
+    k = len(parts)
     #build initial data structures and nearest neighbor hashmap for axial directions
     maxdim = max([(part.bounding_box()[1]-part.bounding_box()[0]).max() for _, part in parts])
     mc_frames = []
     mc_origin = []
-    part2offset = [-1] * len(parts)
+    part2offset = [-1] * k
     total_mcs = 0
     for i,tf_part in enumerate(parts):
         tf, part = tf_part
@@ -93,38 +32,24 @@ def mate_proposals(parts, epsilon_rel=0.001, max_groups=10):
             mc_origin.append(origin)
         part2offset[i] = total_mcs
         total_mcs += len(part.all_mate_connectors)
-    mc_axis = [frame[:,2] for frame in mc_frames]
     mc_quat = [R.from_matrix(frame).as_quat() for frame in mc_frames]
+    mc_axis = [frame[:,2] for frame in mc_frames]
     mc_ray = [np.concatenate([origin, axis]) for origin, axis in zip(mc_origin, mc_axis)]
-    nnhash = pspart.NNHash(mc_axis, 3, epsilon_rel)
-    rayhash = pspart.NNHash(mc_ray, 6, epsilon_rel)
-    offset2part = start_indices_to_interval_tree(part2offset, total_mcs)
+    proposals = inter_group_matches(part2offset, mc_ray, 6, epsilon_rel)
 
-    proposals = set()
-    #get all coincident mate connectors
-    for i,ray in enumerate(mc_ray):
-        nearest = rayhash.get_nearest_points(ray)
-        part_index = offset2part[i]
-        for j in nearest:
-            other_part_index = offset2part[j]
-            if other_part_index != part_index:
-                pi1, pi2 = part_index, other_part_index
-                mci1, mci2 = i - part2offset[part_index], j - part2offset[other_part_index]
-                if pi1 > pi2:
-                    pi1, pi2 = pi2, pi1
-                    mci1, mci2 = mci2, mci1
-                proposals.add((pi1, pi2, mci1, mci2))
+    offset2part = start_indices_to_interval_tree(part2offset, total_mcs)
+    axis_hash = pspart.NNHash(mc_axis, 3, epsilon_rel)
 
     #for each axial cluster, find nearest neighbors of projected set of frames with the same axis direction
     
-    result = cluster_axes(nnhash, mc_axis)
+    clusters = cluster_points(axis_hash, mc_axis)
     # print(result)
-    group_indices = list(result)
-    group_indices.sort(key=lambda k: result[k], reverse=True)
+    group_indices = list(clusters)
+    group_indices.sort(key=lambda k: clusters[k], reverse=True)
     for ind in group_indices[:max_groups]:
         # print('processing group',ind,':',result[ind])
         proj_dir = mc_axis[ind]
-        same_dir_inds = list(nnhash.get_nearest_points(proj_dir))
+        same_dir_inds = list(axis_hash.get_nearest_points(proj_dir))
         xy_plane = mc_frames[ind][:,:2]
         # print('projecting')
         subset_stacked = np.array([mc_origin[i] for i in same_dir_inds])
