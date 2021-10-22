@@ -389,8 +389,7 @@ class AssemblyInfo:
 
         proposal_start = time.time()
         proposals = self.mate_proposals(max_z_groups=max_z_groups)
-        proposal_duration = time.time() - proposal_start
-        self.stats['proposal_time'] = proposal_duration
+        self.stats['proposal_time'] = time.time() - proposal_start
 
         #record any ground truth mates that agree with the proposals
         match_start = time.time()
@@ -418,8 +417,7 @@ class AssemblyInfo:
                 missed_part_pairs += 1
             if not mate_stat['found_by_heuristic']:
                 missed_mates += 1
-        match_duration = time.time() - match_start
-        self.stats['match_time'] = match_duration
+        self.stats['match_time'] = time.time() - match_start
         self.stats['missed_mates'] = missed_mates
         self.stats['missed_part_pairs'] = missed_part_pairs
 
@@ -448,8 +446,7 @@ class AssemblyInfo:
             self.stats['truncated_mc_pairs'] = False
             pair_indices_final = list(range(len(mc_keys)))
 
-        truncation_duration = time.time() - truncation_start
-        self.stats['truncation_time'] = truncation_duration
+        self.stats['truncation_time'] = time.time() - truncation_start
         
         #add mc_pairs, mc_pair_type, and mc_pair_labels sets to assembly data
         #mc_pairs data we want is:
@@ -460,22 +457,43 @@ class AssemblyInfo:
         batch.mc_pair_labels = torch.zeros(len(pair_indices_final), dtype=torch.float32)
         batch.mc_pair_type = torch.zeros(len(pair_indices_final), dtype=torch.int64)
         
-        for col_index, i in enumerate(pair_indices_final):
+        pair_indices_final.sort(key=lambda x: mc_keys[x][0])
+
+        indices_by_part = dict()
+        for i in pair_indices_final:
             part_pair, mc_pair, mateId = mc_keys[i]
-            mcs = [self.normalized_parts[pi].all_mate_connectors[mci] for pi, mci in zip(part_pair, mc_pair)]
+            if part_pair not in indices_by_part:
+                sublist = []
+                indices_by_part[part_pair] = sublist
+            else:
+                sublist = indices_by_part[part_pair]
+            sublist.append(i)
+
+        self.stats['reordering_time'] = time.time() - truncation_start
+
+        col_index = 0
+        for part_pair in indices_by_part:
+            key_indices = indices_by_part[part_pair]
             topo_offsets = [part2offset[partid] for partid in part_pair]
-            batch.mc_pairs[:,col_index] = torch.tensor([mcs[0].orientation_inference.topology_ref + topo_offsets[0], mcs[0].location_inference.topology_ref + topo_offsets[0], mcs[0].location_inference.inference_type.value,
-                          mcs[1].orientation_inference.topology_ref + topo_offsets[1], mcs[1].location_inference.topology_ref + topo_offsets[1], mcs[1].location_inference.inference_type.value], dtype=torch.int64)
-            
-            proposal_feat = proposals[part_pair][mc_pair]
-            batch.mc_proposal_feat[:,col_index] = torch.tensor(proposal_feat[:2], dtype=torch.float32)
-            
-            if mateId >= 0:
-                batch.mc_pair_labels[col_index] = 1
-                batch.mc_pair_type[col_index] = mate_types.index(mates[mateId].type)
+            pair_mc_lists = [self.normalized_parts[pi].all_mate_connectors for pi in part_pair]
+            for i in key_indices:
+                _, mc_pair, mateId = mc_keys[i]
+                mcs = [pair_mc_list[mci] for pair_mc_list, mci in zip(pair_mc_lists, mc_pair)]
+                batch.mc_pairs[:,col_index] = torch.tensor([mcs[0].orientation_inference.topology_ref + topo_offsets[0], mcs[0].location_inference.topology_ref + topo_offsets[0], mcs[0].location_inference.inference_type.value,
+                            mcs[1].orientation_inference.topology_ref + topo_offsets[1], mcs[1].location_inference.topology_ref + topo_offsets[1], mcs[1].location_inference.inference_type.value], dtype=torch.int64)
+                
+                proposal_feat = proposals[part_pair][mc_pair]
+                batch.mc_proposal_feat[:,col_index] = torch.tensor(proposal_feat[:2], dtype=torch.float32)
+                
+                if mateId >= 0:
+                    batch.mc_pair_labels[col_index] = 1
+                    batch.mc_pair_type[col_index] = mate_types.index(mates[mateId].type)
+                
+                col_index += 1
+
+        assert(col_index == len(pair_indices_final))
         
-        conversion_duration = time.time() - conversion_start
-        self.stats['conversion_time'] = conversion_duration
+        self.stats['conversion_time'] = time.time() - conversion_start
 
         return batch
 

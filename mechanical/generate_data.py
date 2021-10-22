@@ -18,7 +18,7 @@ def main():
     parser.add_argument('--max_mc_pairs', type=int, default=100000)
     parser.add_argument('--stride', type=int, default=500)
     parser.add_argument('--save_stats', type=bool, default=True)
-    parser.add_argument('--clear', type=bool, default=False)
+    parser.add_argument('--clear', action='store_true')
     parser.add_argument('--use_uvnet_features', type=bool, default=True)
     
     #parser.add_argument('--prob_threshold', type=float, default=0.7)
@@ -46,6 +46,8 @@ def main():
         shutil.rmtree(statspath)
         shutil.rmtree(outdatapath)
 
+    if not os.path.isdir(args.out_path):
+        os.mkdir(args.out_path)
     if not os.path.isdir(statspath):
         os.mkdir(statspath)
         os.mkdir(outdatapath)
@@ -55,7 +57,7 @@ def main():
         with open(logfile,'a') as logf:
             logf.write(st + '\n')
     LOG('=========RESTARTING=========')
-
+    LOG('loading dataframes...')
     datapath = '/projects/grail/benjones/cadlab'
     df_name = '/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5'
     assembly_df = ps.read_hdf(df_name,'assembly')
@@ -106,7 +108,8 @@ def main():
         num_topologies = assembly_info.num_topologies()
 
         tooBig = num_topologies > max_topologies
-        if num_invalid_parts == 0 and not tooBig:
+        skipped = num_invalid_parts == 0 and not tooBig
+        if skipped:
             mates = []
             for j in range(mate_subset.shape[0]):
                 mate_row = mate_subset.iloc[j]
@@ -118,6 +121,7 @@ def main():
                 mates.append(mate)
             
             batch = assembly_info.create_batches(mates, max_z_groups=max_groups, max_mc_pairs=max_mc_pairs)
+            print(batch)
             fname = f'{ind}.dat'
             torch_datapath = os.path.join(outdatapath, fname)
             torch.save(batch, torch_datapath)
@@ -136,12 +140,14 @@ def main():
             stats['num_invalid_frames'] = sum([mate_stat['num_matches'] == 0 for mate_stat in mate_stats])
             stats['num_missed_mates'] = sum([not mate_stat['found_by_heuristic'] for mate_stat in mate_stats])
             stats['too_big'] = tooBig
+            stats['skipped'] = skipped
             
             all_stats.append(stats)
             processed_indices.append(ind)
 
-            mate_stats += mate_stats
-            mate_indices += list(mate_subset['MateIndex'])
+            if not skipped:
+                mate_stats += mate_stats
+                mate_indices += list(mate_subset['MateIndex'])
 
             if (num_processed+1) % stride == 0:
                 stat_df_mini = ps.DataFrame(all_stats[last_ckpt:], index=processed_indices[last_ckpt:])
