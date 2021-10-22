@@ -259,7 +259,7 @@ class AssemblyInfo:
         return proposal
 
 
-    def _mate_proposals(self, max_z_groups=10):
+    def mate_proposals(self, max_z_groups=10):
         """
         Find probable mate locations
         `max_z_groups`: maximum number of clusters of mate connector z directions to consider as possible axes
@@ -317,7 +317,7 @@ class AssemblyInfo:
         all_proposals = self._join_proposals(all_proposals, *all_axial_proposals)
         all_proposals = self._join_proposals(all_proposals, coincident_proposals)
 
-        return proposals
+        return all_proposals
 
 
     def create_batches(self, mates, max_topologies=1000, max_z_groups=10):
@@ -353,5 +353,5 @@ if __name__ == '__main__':
         print('matches for mate',mate.name,'(', part1, part2,'):',len(matches))
     
     proposals = assembly_info.mate_proposals()
-    print(len(proposals))
-    print(set([match[:2] for match in proposals]))
+    print(sum([len(proposals[part_pair]) for part_pair in proposals]))
+    print(set([part_pair for part_pair in proposals]))
