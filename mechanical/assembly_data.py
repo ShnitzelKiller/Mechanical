@@ -1,6 +1,7 @@
 import os
 from pspart import Part, NNHash
 import numpy as np
+import numpy.linalg as LA
 from utils import find_neighbors, inter_group_matches, cluster_points, sizes_to_interval_tree, homogenize_frame
 from scipy.spatial.transform import Rotation as R
 
@@ -40,7 +41,7 @@ def cs_from_origin_frame(origin, frame):
 
 class AssemblyInfo:
 
-    def __init__(self, part_paths, transforms, occ_ids, epsilon_rel=0.001):
+    def __init__(self, part_paths, transforms, occ_ids, epsilon_rel=0.001, use_uvnet_features=False):
         self.epsilon_rel = epsilon_rel
         self.part_paths = part_paths
         self.part_caches = []
@@ -58,7 +59,7 @@ class AssemblyInfo:
             assert(os.path.isfile(path))
             with open(path) as partf:
                 part_str = partf.read()
-                part = Part(part_str)
+                part = Part(part_str, uv_features=use_uvnet_features)
                 self.part_caches.append(part_str)
                 self.parts.append(part)
                 self.occ_to_index[occ_ids[j]] = j
@@ -77,7 +78,7 @@ class AssemblyInfo:
         p_normalized[3,3] = self.maxdim #todo: figure out if this is double the factor
 
         norm_matrices = [p_normalized @ tf for tf in transforms]
-        self.normalized_parts = [Part(cached_part, mat) for cached_part, mat in zip(self.part_caches, norm_matrices)]
+        self.normalized_parts = [Part(cached_part, mat, uv_features=use_uvnet_features) for cached_part, mat in zip(self.part_caches, norm_matrices)]
         
         #these may change if we choose to handle transforms differently. TODO if changing: also handle the epsilons/scaling thresholds!
         self.mate_transforms = norm_matrices
@@ -192,7 +193,7 @@ class AssemblyInfo:
                 matches = []
             else:
                 raise ValueError
-        return matches
+        return part_indices[0], part_indices[1], matches
 
     def num_mate_connectors(self):
         return sum([len(origins) for origins in self.mc_origins_all])
@@ -226,23 +227,66 @@ class AssemblyInfo:
                     #num_normalized_parts_with_different_mcs += 1
                     num_discrepancies += 1
         return num_discrepancies
-    
-    def mate_proposals(self, max_z_groups=10):
+
+
+    def _matches_to_proposals(self, matches, proposal_type):
+        proposals = dict()
+        for match in matches:
+            part_pair = match[:2]
+            mc_pair = match[2:]
+            if part_pair not in proposals:
+                mc_pairs_dict = dict()
+                proposals[part_pair] = mc_pairs_dict
+            else:
+                mc_pairs_dict = proposals[part_pair]
+            dist = LA.norm(self.mc_origins_all[part_pair[0]][mc_pair[0]] - self.mc_origins_all[part_pair[1]][mc_pair[1]])
+            mc_pairs_dict[mc_pair] = (proposal_type, dist)
+        return proposals
+
+    def _join_proposals(self, proposal, *proposals):
         """
-        Find list of (part1, part2, mc1, mc2) of probable mate locations
+        Call this with the lowest priority proposals first, as those to the right overwrite their predecessors.
+        All proposals are merged into the first argument. The following input dicts may also be modified (do not reuse after calling this)
+        """
+        for newprop in proposals:
+            for part_pair in newprop:
+                new_mc_pairs_dict = newprop[part_pair]
+                if part_pair not in proposal:
+                    proposal[part_pair] = new_mc_pairs_dict
+                else:
+                    proposal[part_pair].update(new_mc_pairs_dict)
+                    
+        return proposal
+
+
+    def _mate_proposals(self, max_z_groups=10):
+        """
+        Find probable mate locations
         `max_z_groups`: maximum number of clusters of mate connector z directions to consider as possible axes
+        Returns: Dictionary from (partId1, partId2) -> (mc1, mc2) -> (ptype, dist)
+        where ptype is the type of proposal, and can be:
+        - 0: coincident
+        - 1: coaxial
+        - 2: coplanar
+
+        and dist is the euclidian distance between the mate connector origins.
+
         """
         mc_counts = [len(mcos) for mcos in self.mc_origins_all]
         
-        offset2part = sizes_to_interval_tree(mc_counts)
-        part2offset = [0] + mc_counts[:-1]
+        #offset2part = sizes_to_interval_tree(mc_counts)
+        #part2offset = [0] + mc_counts[:-1]
 
         flattened_origins = [origin for mc_origins in self.mc_origins_all for origin in mc_origins]
         flattened_rots = [rot for mc_rots in self.mc_rots_homogenized_all for rot in mc_rots]
         mc_axis = [rot[:,2] for rot in flattened_rots]
         mc_ray = [np.concatenate([origin, axis]) for origin, axis in zip(flattened_origins, mc_axis)]
         mc_quat = [R.from_matrix(rot).as_quat() for rot in flattened_rots]
-        proposals = inter_group_matches(mc_counts, mc_ray, 6, self.epsilon_rel)
+        matches = inter_group_matches(mc_counts, mc_ray, 6, self.epsilon_rel)
+        coincident_proposals = self._matches_to_proposals(matches, 0)
+
+        all_axial_proposals = []
+        all_planar_proposals = []
 
         #for each axial cluster, find nearest neighbors of projected set of frames with the same axis direction
         axis_hash = NNHash(mc_axis, 3, self.epsilon_rel)
@@ -258,14 +302,31 @@ class AssemblyInfo:
             # print('projecting to find axes')
             subset_stacked = np.array([flattened_origins[i] for i in same_dir_inds])
             projected_origins = list(subset_stacked @ xy_plane)
-            axial_proposals = inter_group_matches(mc_counts, projected_origins, 2, self.epsilon_rel, point_to_grouped_map=index_map)
-            proposals = proposals.union(axial_proposals)
+            axial_matches = inter_group_matches(mc_counts, projected_origins, 2, self.epsilon_rel, point_to_grouped_map=index_map)
+            axial_proposals = self._matches_to_proposals(axial_matches, 1)
+            all_axial_proposals.append(axial_proposals)
+            
             # print('projecting to find planes')
             projected_z = list(subset_stacked @ proj_dir)
             z_quat = [np.concatenate([mc_quat[same_dir_ind], [z_dist]]) for same_dir_ind, z_dist in zip(same_dir_inds, projected_z)]
-            planar_proposals = inter_group_matches(mc_counts, z_quat, 5, self.epsilon_rel, point_to_grouped_map=index_map)
-            proposals = proposals.union(planar_proposals)
+            planar_matches = inter_group_matches(mc_counts, z_quat, 5, self.epsilon_rel, point_to_grouped_map=index_map)
+            planar_proposals = self._matches_to_proposals(planar_matches, 2)
+            all_planar_proposals.append(planar_proposals)
+        
+        all_proposals = self._join_proposals(*all_planar_proposals)
+        all_proposals = self._join_proposals(all_proposals, *all_axial_proposals)
+        all_proposals = self._join_proposals(all_proposals, coincident_proposals)
+
         return proposals
+
+
+    def create_batches(self, mates, max_topologies=1000, max_z_groups=10):
+        
+        proposals = self.mate_proposals(max_z_groups=max_z_groups)
+
+
+        for mate in mates:
+            part1, part2, matches = self.find_mated_pairs(mate)
 
 
 
@@ -288,8 +349,8 @@ if __name__ == '__main__':
     print('mate connectors:',assembly_info.num_mate_connectors())
 
     for mate in mates:
-        matches = assembly_info.find_mated_pairs(mate)
-        print('matches for mate',mate.name,':',len(matches))
+        part1, part2, matches = assembly_info.find_mated_pairs(mate)
+        print('matches for mate',mate.name,'(', part1, part2,'):',len(matches))
     
     proposals = assembly_info.mate_proposals()
     print(len(proposals))
