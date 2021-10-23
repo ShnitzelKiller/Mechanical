@@ -56,6 +56,9 @@ def main():
     def LOG(st):
         with open(logfile,'a') as logf:
             logf.write(st + '\n')
+
+    replace_keys={'truncated_mc_pairs': False, 'invalid_bbox': False}
+
     LOG('=========RESTARTING=========')
     LOG(str(args))
     LOG('loading dataframes...')
@@ -154,14 +157,15 @@ def main():
 
             if (num_processed+1) % stride == 0:
                 stat_df_mini = ps.DataFrame(all_stats[last_ckpt:], index=processed_indices[last_ckpt:])
-                mate_stat_df_mini = ps.DataFrame(all_mate_stats[last_mate_ckpt:], index=mate_indices[last_mate_ckpt:])
+                stat_df_mini.fillna(value=replace_keys, inplace=True)
                 stat_df_mini.to_parquet(os.path.join(statspath, f'stats_{num_processed + start_index}.parquet'))
+                mate_stat_df_mini = ps.DataFrame(all_mate_stats[last_mate_ckpt:], index=mate_indices[last_mate_ckpt:])
                 mate_stat_df_mini.to_parquet(os.path.join(statspath, f'mate_stats_{ind}.parquet'))
                 last_mate_ckpt = len(mate_indices)
                 last_ckpt = len(processed_indices)
 
     stats_df = ps.DataFrame(all_stats, index=processed_indices)
-    stats_df.fillna(value={'truncated_mc_pairs': False, 'invalid_bbox': False}, inplace=True)
+    stats_df.fillna(value=replace_keys, inplace=True)
     print(all_stats)
     print(stats_df)
     stats_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))

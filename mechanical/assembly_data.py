@@ -194,44 +194,48 @@ class AssemblyInfo:
             xy_plane = mate_rots_homogenized[0][:,:2]
             z_dir = mate_rots_homogenized[0][:,2]
             same_dir_inds = [list(self.mcz_hashes[ind].get_nearest_points(z_dir)) for ind in part_indices]
-            subset_stacked = [np.array([self.mc_origins_all[ind][i] for i in same_dir_inds_i]) for ind, same_dir_inds_i in zip(part_indices, same_dir_inds)]
-            if mate.type == 'CYLINDRICAL' or mate.type == 'REVOLUTE' or mate.type == 'SLIDER':
-                projected_origins = [list(subset_stacked_i @ xy_plane) for subset_stacked_i in subset_stacked] #origins of mcfs with the same z direction projected onto a shared xy plane
-                
-                if mate.type == 'SLIDER':
-                    matches = find_neighbors(*projected_origins, 2, self.epsilon_rel) #neighbors are found in the subset of same direction mcs
-                    matches = _transform_matches(matches, same_dir_inds)
-                else:
-                    mate_origin_proj = mate_origins[0] @ xy_plane
-                    axial_indices = []
-                    for inds, po in zip(same_dir_inds, projected_origins):
-                        axial_indices_i = []
-                        for j,point in zip(inds, po):
-                            disp = point - mate_origin_proj
-                            if disp.dot(disp) < epsilon_rel2:
-                                axial_indices_i.append(j)
-                        axial_indices.append(axial_indices_i)
-
-                    if mate.type == 'CYLINDRICAL':
-                        matches = [(i, j) for i in axial_indices[0] for j in axial_indices[1]]
-                    elif mate.type == 'REVOLUTE':
-                        subset_axial = [np.array([self.mc_origins_all[ind][i] for i in axial_indices_i]) for ind, axial_indices_i in zip(part_indices, axial_indices)]
-                        z_positions = [list((subset_stacked_i @ z_dir)[:,np.newaxis]) for subset_stacked_i in subset_axial]
-                        matches = find_neighbors(*z_positions, 1, self.epsilon_rel) #neighbors are found in the subset of axial mcs
-                        matches = _transform_matches(matches, axial_indices)
-                    else:
-                        assert(False)
-
-            elif mate.type == 'PLANAR':
-                z_positions = [list((subset_stacked_i @ z_dir)[:,np.newaxis]) for subset_stacked_i in subset_stacked]
-                matches = find_neighbors(*z_positions, 1, self.epsilon_rel) #neighbors are found in the subset of same direction mcs
-                matches = _transform_matches(matches, same_dir_inds)
-            elif mate.type == 'PARALLEL':
-                matches = [(i, j) for i in same_dir_inds[0] for j in same_dir_inds[1]]
-            elif mate.type == 'PIN_SLOT':
+            if any([len(same_dir_i) == 0 for same_dir_i in same_dir_inds]):
                 matches = []
             else:
-                raise ValueError
+                subset_stacked = [np.array([self.mc_origins_all[ind][i] for i in same_dir_inds_i]) for ind, same_dir_inds_i in zip(part_indices, same_dir_inds)]
+                if mate.type == 'CYLINDRICAL' or mate.type == 'REVOLUTE' or mate.type == 'SLIDER':
+                    projected_origins = [list(subset_stacked_i @ xy_plane) for subset_stacked_i in subset_stacked] #origins of mcfs with the same z direction projected onto a shared xy plane
+                    
+                    if mate.type == 'SLIDER':
+                        matches = find_neighbors(*projected_origins, 2, self.epsilon_rel) #neighbors are found in the subset of same direction mcs
+                        matches = _transform_matches(matches, same_dir_inds)
+                    else:
+                        mate_origin_proj = mate_origins[0] @ xy_plane
+                        axial_indices = []
+                        for inds, po in zip(same_dir_inds, projected_origins):
+                            axial_indices_i = []
+                            for j,point in zip(inds, po):
+                                disp = point - mate_origin_proj
+                                if disp.dot(disp) < epsilon_rel2:
+                                    axial_indices_i.append(j)
+                            axial_indices.append(axial_indices_i)
+                        if any([len(axial_indices_i) == 0 for axial_indices_i in axial_indices]):
+                            matches = []
+                        elif mate.type == 'CYLINDRICAL':
+                            matches = [(i, j) for i in axial_indices[0] for j in axial_indices[1]]
+                        elif mate.type == 'REVOLUTE':
+                            subset_axial = [np.array([self.mc_origins_all[ind][i] for i in axial_indices_i]) for ind, axial_indices_i in zip(part_indices, axial_indices)]
+                            z_positions = [list((subset_stacked_i @ z_dir)[:,np.newaxis]) for subset_stacked_i in subset_axial]
+                            matches = find_neighbors(*z_positions, 1, self.epsilon_rel) #neighbors are found in the subset of axial mcs
+                            matches = _transform_matches(matches, axial_indices)
+                        else:
+                            assert(False)
+
+                elif mate.type == 'PLANAR':
+                    z_positions = [list((subset_stacked_i @ z_dir)[:,np.newaxis]) for subset_stacked_i in subset_stacked]
+                    matches = find_neighbors(*z_positions, 1, self.epsilon_rel) #neighbors are found in the subset of same direction mcs
+                    matches = _transform_matches(matches, same_dir_inds)
+                elif mate.type == 'PARALLEL':
+                    matches = [(i, j) for i in same_dir_inds[0] for j in same_dir_inds[1]]
+                elif mate.type == 'PIN_SLOT':
+                    matches = []
+                else:
+                    raise ValueError
         return part_indices[0], part_indices[1], matches
 
     def num_mate_connectors(self):
@@ -405,15 +409,17 @@ class AssemblyInfo:
 
         proposal_start = time.time()
         proposals = self.mate_proposals(max_z_groups=max_z_groups)
+
+        #record "pooled" proposal stats for each part pair
+        proposals_pooled = dict()
+        for part_pair in proposals:
+            mc_dict = proposals[part_pair]
+            best_mc_pair = min(mc_dict, key=lambda x: mc_dict[x][1])
+            proposals_pooled[part_pair] = mc_dict[best_mc_pair]
+
         self.stats['proposal_time'] = time.time() - proposal_start
         self.stats['num_proposals'] = len(proposals)
 
-        #record "pooled" proposal stats for each part pair
-        # proposals_pooled = dict()
-        # for part_pair in proposals:
-        #     mc_dict = proposals[part_pair]
-        #     best_mc_pair = min(mc_dict, key=lambda x: mc_dict[x][1])
-        #     proposals_pooled[part_pair] = mc_dict[best_mc_pair]
 
         #record any ground truth mates that agree with the proposals
         match_start = time.time()
@@ -518,18 +524,9 @@ class AssemblyInfo:
         assert(col_index == len(pair_indices_final))
         self.stats['conversion_time'] = time.time() - conversion_start
 
-        scatter_start = time.time()
-        N = len(self.parts)
-        assert(N > 0)
+        batch.part_edges = torch.tensor([key for key in proposals]).T
+        batch.part_pair_feats = torch.tensor([proposals_pooled[key][:2] for key in proposals]).T
 
-        graph_ids = batch.graph_idx.flatten()
-        mc_part_0 = graph_ids[batch.mc_pairs[0,:]]
-        mc_part_1 = graph_ids[batch.mc_pairs[3,:]]
-        part_pair_ids = mc_part_0 * N + mc_part_1
-        scattered_part_pair_features = torch_scatter.scatter(src=torch.cat([batch.mc_proposal_feat, mc_part_0.unsqueeze(0), mc_part_1.unsqueeze(0)]), index=part_pair_ids, dim=1, reduce="min")
-        batch.part_pair_feats = scattered_part_pair_features[:,scattered_part_pair_features[0].nonzero().flatten()]
-        
-        self.stats['scatter_time'] = time.time() - scatter_start
         return batch
 
 #test that this assembly has all mates matched and found by heuristics
