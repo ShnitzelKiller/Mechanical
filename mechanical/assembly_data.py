@@ -477,17 +477,14 @@ class AssemblyInfo:
             part1, part2, matches = self.find_mated_pairs(mate)
             mate_stat['num_possible_mc_pairs'] = len(matches)
             mate_stat['has_invalid_parts'] = part1 < 0 or part2 < 0
+            mate_stat['num_possible_proposed_mc_pairs'] = 0
             if mate_stat['has_invalid_parts']:
                 num_invalid_mates += 1
-                mate_stat['num_possible_proposed_mc_pairs'] = 0
-                mate_stat['found_by_heuristic'] = False
             else:
                 if part1 > part2:
                     part1, part2 = part2, part1
                     matches = [(match[1], match[0]) for match in matches]
                 
-                mate_stat['found_by_heuristic'] = False
-
                 part_pair = part1, part2
                 if part_pair in proposals:
                     num_matching_proposals = 0

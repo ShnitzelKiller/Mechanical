@@ -123,7 +123,11 @@ def main():
         part_occs = assembly_def['part_occurrences']
         tf_dict = dict()
         for occ in part_occs:
-            tf_dict[occ['id']] = np.array(occ['transform']).reshape(4, 4)
+            tf = np.array(occ['transform']).reshape(4, 4)
+            npyname = f'/fast/jamesn8/assembly_data/transform64_cache/{ind}.npy'
+            if not os.path.isfile(npyname):
+                np.save(npyname, tf)
+            tf_dict[occ['id']] = tf
 
         for j in range(part_subset.shape[0]):
             path = os.path.join(datapath, 'data/models', *[part_subset.iloc[j][k] for k in ['did','mv','eid','config']], f'{part_subset.iloc[j]["PartId"]}.xt')
