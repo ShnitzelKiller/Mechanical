@@ -113,7 +113,7 @@ class AssemblyInfo:
         self.stats['num_topologies'] = num_topologies
         self.stats['too_big'] = num_topologies > max_topologies
 
-        if num_topologies <= max_topologies:
+        if num_topologies <= max_topologies and len(self.parts) > 0:
             self.bbox = global_bounding_box(self.parts, self.occ_transforms)
             self.stats['invalid_bbox'] = self.bbox is None
             
@@ -140,9 +140,9 @@ class AssemblyInfo:
                     e.args += (self.stats, [len(lst) for lst in list_of_lists])
                     raise
                 
-
-        assert([self.occ_to_index[occi] == i for i, occi in enumerate(self.occ_ids)])
-        assert([self.occ_ids[self.occ_to_index[occi]] == occi for occi in self.occ_to_index])
+        if len(self.occ_ids) > 0:
+            assert([self.occ_to_index[occi] == i for i, occi in enumerate(self.occ_ids)])
+            assert([self.occ_ids[self.occ_to_index[occi]] == occi for occi in self.occ_to_index])
         self.stats['initialized'] = self.valid
         
 
@@ -588,8 +588,8 @@ if __name__ == '__main__':
     import onshape.brepio as brepio
     datapath = '/projects/grail/benjones/cadlab'
     loader = brepio.Loader(datapath)
-    geo, mates = loader.load_flattened('7886c69b1f149069e7a43bdb_b809b448b6da81db4b2388a0_1dc646f33c96254f526ea650.json', skipInvalid=True, geometry=False)
-    #geo, mates = loader.load_flattened('e4803faed1b9357f8db3722c_ce43730c0f1758f756fc271f_c00b5256d7e874e534c083e8.json', skipInvalid=True, geometry=False)
+    #geo, mates = loader.load_flattened('7886c69b1f149069e7a43bdb_b809b448b6da81db4b2388a0_1dc646f33c96254f526ea650.json', skipInvalid=True, geometry=False)
+    geo, mates = loader.load_flattened('e4803faed1b9357f8db3722c_ce43730c0f1758f756fc271f_c00b5256d7e874e534c083e8.json', skipInvalid=True, geometry=False)
     occ_ids = list(geo.keys())
     part_paths = []
     transforms = []

@@ -65,7 +65,7 @@ def main():
     
     def record_val(val):
         with open(resumefile, 'w') as f:
-            f.write(val + '\n')
+            f.write(str(val) + '\n')
             f.flush()
     
     def read_val():
