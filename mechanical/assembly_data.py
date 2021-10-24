@@ -158,6 +158,8 @@ class AssemblyInfo:
                     self.invalid_occs.add(occ)
             self.parts, self.part_paths, self.part_caches, norm_matrices, self.occ_ids = zip([group for group in zip(transformed_parts, self.part_paths, self.part_caches, norm_matrices, self.occ_ids) if group[0].valid])
             self.recompute_map()
+        else:
+            self.parts = transformed_parts
 
         #these may change if we choose to handle transforms differently. TODO if changing: also handle the epsilons/scaling thresholds!
         self.mate_transforms = norm_matrices
