@@ -20,6 +20,7 @@ def main():
     parser.add_argument('--save_stats', type=bool, default=True)
     parser.add_argument('--clear', action='store_true')
     parser.add_argument('--use_uvnet_features', type=bool, default=True)
+    parser.add_argument('--last_checkpoint', action='store_true')
     
     #parser.add_argument('--prob_threshold', type=float, default=0.7)
 
@@ -53,9 +54,23 @@ def main():
         os.mkdir(outdatapath)
     
     logfile = os.path.join(statspath, 'log.txt')
+    resumefile = os.path.join(statspath, 'recovery.txt')
     def LOG(st):
         with open(logfile,'a') as logf:
             logf.write(st + '\n')
+            logf.flush()
+    
+    def record_val(val):
+        with open(resumefile, 'w') as f:
+            f.write(val + '\n')
+            f.flush()
+    
+    def read_val():
+        with open(resumefile,'r') as f:
+            return int(f.read())
+    
+    if args.last_checkpoint:
+        start_index = read_val()
 
     replace_keys={'truncated_mc_pairs': False, 'invalid_bbox': False}
 
@@ -88,8 +103,8 @@ def main():
     if stop_index < 0:
         stop_index = len(assembly_indices)
     for num_processed,ind in enumerate(assembly_indices[start_index:stop_index]):
-        print(f'num_processed: {num_processed+start_index}/{len(assembly_indices[start_index:])}')
-        LOG(f'{num_processed+start_index}/{len(assembly_indices[start_index:])}: processing {assembly_df.loc[ind,"AssemblyPath"]} at {time.time()-run_start_time}')
+        print(f'num_processed: {num_processed+start_index}/{len(assembly_indices)}')
+        LOG(f'{num_processed+start_index}/{len(assembly_indices)}: processing {assembly_df.loc[ind,"AssemblyPath"]} at {time.time()-run_start_time}')
 
         part_subset = part_df.loc[ind]
         mate_subset = mate_df.loc[ind]
@@ -109,42 +124,46 @@ def main():
         
         assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
         num_topologies = assembly_info.num_topologies()
+        LOG(f'initialized AssemblyInfo with {num_topologies} topologies')
+        LOG(f'topologies per part: {[part.num_topologies for part in assembly_info.parts]}')
+        for j,part in enumerate(assembly_info.parts):
+            if part.num_topologies != len(part.node_types):
+                LOG(f'part {j} has valid bit {part.valid}, and length of node type vector is {len(part.node_types)}')
+            #assert(part.num_topologies == len(part.node_types))
+        
         num_invalid_parts = -1
-        num_parts_with_discrepancies = -1
         skipped = True
         if assembly_info.stats['initialized']:
+            #LOG(f'normalization_matrices:{assembly_info.norm_matrices}')
             num_invalid_parts = assembly_info.num_invalid_parts()
-            num_parts_with_discrepancies = assembly_info.num_normalized_parts_with_discrepancies()
-            if num_invalid_parts == 0:
-                skipped = False
-                mates = []
-                for j in range(mate_subset.shape[0]):
-                    mate_row = mate_subset.iloc[j]
-                    mate = Mate(occIds=[mate_row[f'Part{p+1}'] for p in range(2)],
-                            origins=[mate_row[f'Origin{p+1}'] for p in range(2)],
-                            rots=[mate_row[f'Axes{p+1}'] for p in range(2)],
-                            name=mate_row['Name'],
-                            mateType=mate_row['Type'])
-                    mates.append(mate)
-                
-                batch = assembly_info.create_batches(mates, max_z_groups=max_groups, max_mc_pairs=max_mc_pairs)
-                LOG(str(batch))
-                fname = f'{ind}.dat'
-                torch_datapath = os.path.join(outdatapath, fname)
-                torch.save(batch, torch_datapath)
+            assert(num_invalid_parts == 0)
+            skipped = False
+            mates = []
+            for j in range(mate_subset.shape[0]):
+                mate_row = mate_subset.iloc[j]
+                mate = Mate(occIds=[mate_row[f'Part{p+1}'] for p in range(2)],
+                        origins=[mate_row[f'Origin{p+1}'] for p in range(2)],
+                        rots=[mate_row[f'Axes{p+1}'] for p in range(2)],
+                        name=mate_row['Name'],
+                        mateType=mate_row['Type'])
+                mates.append(mate)
+            
+            LOG(f'creating batch data...')
+            batch = assembly_info.create_batches(mates, max_z_groups=max_groups, max_mc_pairs=max_mc_pairs)
+            LOG(str(batch))
+            fname = f'{ind}.dat'
+            torch_datapath = os.path.join(outdatapath, fname)
+            torch.save(batch, torch_datapath)
+            del batch
 
         if save_stats:
             stats = assembly_info.stats
             mate_stats = assembly_info.mate_stats
 
             stats['num_mates'] = mate_subset.shape[0]
-            stats['num_parts'] = part_subset.shape[0]
             stats['num_mcs'] = assembly_info.num_mate_connectors()
-            stats['num_topologies'] = num_topologies
-            stats['num_invalid_parts'] = num_invalid_parts
-            stats['num_normalized_parts_with_discrepancies'] = num_parts_with_discrepancies
             stats['num_invalid_frames'] = sum([mate_stat['num_matches'] == 0 for mate_stat in mate_stats])
-            stats['num_missed_mates'] = sum([not mate_stat['found_by_heuristic'] for mate_stat in mate_stats])
+            stats['num_mates_not_detected'] = sum([not mate_stat['found_by_heuristic'] for mate_stat in mate_stats])
             #stats['too_big'] = tooBig
             stats['skipped'] = skipped
             
@@ -155,7 +174,7 @@ def main():
                 all_mate_stats += mate_stats
                 mate_indices += list(mate_subset['MateIndex'])
 
-            if (num_processed+1) % stride == 0:
+            if (num_processed+start_index+1) % stride == 0:
                 stat_df_mini = ps.DataFrame(all_stats[last_ckpt:], index=processed_indices[last_ckpt:])
                 stat_df_mini.fillna(value=replace_keys, inplace=True)
                 stat_df_mini.to_parquet(os.path.join(statspath, f'stats_{num_processed + start_index}.parquet'))
@@ -163,6 +182,9 @@ def main():
                 mate_stat_df_mini.to_parquet(os.path.join(statspath, f'mate_stats_{ind}.parquet'))
                 last_mate_ckpt = len(mate_indices)
                 last_ckpt = len(processed_indices)
+                record_val(num_processed + start_index + 1)
+
+        del assembly_info
 
     stats_df = ps.DataFrame(all_stats, index=processed_indices)
     stats_df.fillna(value=replace_keys, inplace=True)

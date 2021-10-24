@@ -61,42 +61,64 @@ def _transform_matches(matches, index_maps):
 
 class AssemblyInfo:
 
+    def recompute_map(self):
+        self.occ_to_index = dict()
+        for i,occ in enumerate(self.occ_ids):
+            self.occ_to_index[occ] = i
+              
+
     def __init__(self, part_paths, transforms, occ_ids, epsilon_rel=0.001, use_uvnet_features=False, max_topologies=10000):
         self.epsilon_rel = epsilon_rel
         self.use_uvnet_features = use_uvnet_features
-        self.part_paths = part_paths
-        self.part_caches = []
+        self.stats = dict()
+        self.mate_stats = []
+        self.invalid_occs = set()
+
         self.parts = []
-        self.occ_transforms = transforms
-        self.occ_to_index = {}
-        self.occ_ids = occ_ids
+        self.part_paths = []
+        self.part_caches = []
+        self.occ_transforms = []
+        self.occ_ids = []
         self.mc_origins_all = []
         self.mc_rots_all = [] #3x3 matrices
         self.mc_rots_homogenized_all = []
         self.mco_hashes = [] #spatial hashes of origins
         self.mcz_hashes = [] #spatial hashes of homogenized z direction
         self.mcr_hashes = [] #spatial hashes of origin + homogenized z dir
-        self.stats = dict()
-        self.mate_stats = []
 
-        for j,path in enumerate(part_paths):
+        for path, occ, tf in zip(part_paths, occ_ids, transforms):
             assert(os.path.isfile(path))
             with open(path) as partf:
                 part_str = partf.read()
-                part = Part(part_str, uv_features=use_uvnet_features)
-                self.part_caches.append(part_str)
-                self.parts.append(part)
-                self.occ_to_index[occ_ids[j]] = j
+                part = Part(part_str, uv_features=False)
+                if part.valid:
+                    self.part_paths.append(path)
+                    self.part_caches.append(part_str)
+                    self.parts.append(part)
+                    self.occ_transforms.append(tf)
+                    self.occ_ids.append(occ)
+                else:
+                    self.invalid_occs.add(occ)
+        
+        self.recompute_map()
 
-        self.stats['initialized'] = False
-        self.stats['too_big'] = self.num_topologies() > max_topologies
-        if not self.stats['too_big']:
+        assert(all(len(x)==len(self.parts) for x in [self.part_paths, self.part_caches, \
+                        self.occ_transforms, self.occ_to_index, self.occ_ids]))
 
-            self.bbox = global_bounding_box(self.parts, transforms)
+        num_topologies = self.num_topologies()
+
+        self.valid = False
+        self.stats['num_total_parts'] = len(part_paths)
+        self.stats['num_invalid_loaded_parts'] = len(self.invalid_occs)
+        self.stats['num_topologies'] = num_topologies
+        self.stats['too_big'] = num_topologies > max_topologies
+
+        if num_topologies <= max_topologies:
+            self.bbox = global_bounding_box(self.parts, self.occ_transforms)
             self.stats['invalid_bbox'] = self.bbox is None
             
-            if not self.bbox is None:
-                self.stats['initialized'] = True
+            if self.bbox is not None:
+                self.valid = True
                 minPt, maxPt = self.bbox
                 self.median = self.bbox.mean(axis=0)
                 dims = maxPt - minPt
@@ -105,12 +127,17 @@ class AssemblyInfo:
 
                 self.transform_parts()
                 
-                #these may change if we choose to handle transforms differently. TODO if changing: also handle the epsilons/scaling thresholds!
-                self.mate_transforms = self.norm_matrices
-                self.part_transforms = [np.identity(4) for part in self.normalized_parts]
+                self.precompute_geometry()
 
-                self.populate_hashes()
-        
+                assert(all(len(x)==len(self.parts) for x in [self.part_paths, self.part_caches, \
+                        self.occ_transforms, self.occ_to_index, self.occ_ids, self.mc_origins_all, \
+                        self.mc_rots_all, self.mc_rots_homogenized_all, \
+                        self.mco_hashes, self.mcz_hashes, self.mcr_hashes, \
+                        self.mate_transforms, self.part_transforms]))
+
+        assert([self.occ_to_index[occi] == i for i, occi in enumerate(self.occ_ids)])
+        assert([self.occ_ids[self.occ_to_index[occi]] == occi for occi in self.occ_to_index])
+        self.stats['initialized'] = self.valid
         
 
     def transform_parts(self):
@@ -118,34 +145,50 @@ class AssemblyInfo:
         p_normalized[:3,3] = -self.median
         p_normalized[3,3] = self.maxdim #todo: figure out if this is double the factor
 
-        self.norm_matrices = [p_normalized @ tf for tf in self.occ_transforms]
-        self.normalized_parts = [Part(cached_part, mat, uv_features=self.use_uvnet_features) for cached_part, mat in zip(self.part_caches, self.norm_matrices)]
+        norm_matrices = [p_normalized @ tf for tf in self.occ_transforms]
+        transformed_parts = [Part(cached_part, mat, uv_features=self.use_uvnet_features) for cached_part, mat in zip(self.part_caches, norm_matrices)]
+        self.stats['num_normalized_parts_with_discrepancies'] = self._num_normalized_parts_with_discrepancies(transformed_parts)
+
+        #filter out invalid ones from the existing structures:
+        num_invalid = self.num_invalid_parts()
+        self.stats['num_invalid_transformed_parts'] = num_invalid
+        if num_invalid > 0:
+            for part, occ in zip(transformed_parts, self.occ_ids):
+                if not part.valid:
+                    self.invalid_occs.add(occ)
+            self.parts, self.part_paths, self.part_caches, norm_matrices, self.occ_ids = zip([group for group in zip(transformed_parts, self.part_paths, self.part_caches, norm_matrices, self.occ_ids) if group[0].valid])
+            self.recompute_map()
+
+        #these may change if we choose to handle transforms differently. TODO if changing: also handle the epsilons/scaling thresholds!
+        self.mate_transforms = norm_matrices
+        self.part_transforms = [np.identity(4) for part in self.parts]
 
 
-    def populate_hashes(self):
+    def precompute_geometry(self):
         #analyze mate connectors
-        for tf,part in zip(self.part_transforms, self.normalized_parts):
-            mc_origins = []
-            mc_rots = []
-            for mc in part.all_mate_connectors:
-                cs = mc.get_coordinate_system()
-                cs_transformed = tf @ cs
-                origin, rot = cs_to_origin_frame(cs_transformed)
-                mc_origins.append(origin)
-                mc_rots.append(rot)
+        for tf,part in zip(self.part_transforms, self.parts):
+            if part.valid:
+                mc_origins = []
+                mc_rots = []
+                for mc in part.all_mate_connectors:
+                    cs = mc.get_coordinate_system()
+                    cs_transformed = tf @ cs
+                    origin, rot = cs_to_origin_frame(cs_transformed)
+                    mc_origins.append(origin)
+                    mc_rots.append(rot)
 
-            self.mc_rots_all.append(mc_rots)
-            self.mc_origins_all.append(mc_origins)
-            mc_rots_homogenized = [homogenize_frame(rot, z_flip_only=True) for rot in mc_rots]
-            self.mc_rots_homogenized_all.append(mc_rots_homogenized)
+                self.mc_rots_all.append(mc_rots)
+                self.mc_origins_all.append(mc_origins)
+                mc_rots_homogenized = [homogenize_frame(rot, z_flip_only=True) for rot in mc_rots]
+                self.mc_rots_homogenized_all.append(mc_rots_homogenized)
 
-            mc_rays = [np.concatenate([origin,rot[:,2]]) for origin, rot in zip(mc_origins, mc_rots_homogenized)]
-            origin_hash = NNHash(mc_origins, 3, self.epsilon_rel)
-            z_hash = NNHash([rot[:,2] for rot in mc_rots_homogenized], 3, self.epsilon_rel)
-            ray_hash = NNHash(mc_rays, 6, self.epsilon_rel)
-            self.mco_hashes.append(origin_hash)
-            self.mcz_hashes.append(z_hash)
-            self.mcr_hashes.append(ray_hash)
+                mc_rays = [np.concatenate([origin,rot[:,2]]) for origin, rot in zip(mc_origins, mc_rots_homogenized)]
+                origin_hash = NNHash(mc_origins, 3, self.epsilon_rel)
+                z_hash = NNHash([rot[:,2] for rot in mc_rots_homogenized], 3, self.epsilon_rel)
+                ray_hash = NNHash(mc_rays, 6, self.epsilon_rel)
+                self.mco_hashes.append(origin_hash)
+                self.mcz_hashes.append(z_hash)
+                self.mcr_hashes.append(ray_hash)
 
     def find_mated_pairs(self, mate):
         """
@@ -245,20 +288,14 @@ class AssemblyInfo:
         return sum([part.num_topologies for part in self.parts])
     
     def num_invalid_parts(self):
-        return sum([not npart.valid for npart in self.normalized_parts])
+        return sum([not npart.valid for npart in self.parts])
     
-    def num_normalized_parts_with_discrepancies(self):
-        #num_normalized_parts_with_different_graph_size = 0
-        #num_normalized_parts_with_different_num_mcs = 0
-        #num_normalized_parts_with_different_mcs = 0
+    def _num_normalized_parts_with_discrepancies(self, norm_parts):
         num_discrepancies = 0
-        for npart, part in zip(self.normalized_parts, self.parts):
+        for npart, part in zip(norm_parts, self.parts):
             if npart.num_topologies != part.num_topologies:
-                #num_normalized_parts_with_different_graph_size += 1
                 num_discrepancies += 1
             elif len(npart.all_mate_connectors) != len(part.all_mate_connectors):
-                #num_normalized_parts_with_different_num_mcs += 1
-                #num_normalized_parts_with_different_mcs += 1
                 num_discrepancies += 1
             else:
                 mc_data = set()
@@ -270,7 +307,6 @@ class AssemblyInfo:
                     mc_dat = (mc.orientation_inference.topology_ref, mc.location_inference.topology_ref, mc.location_inference.inference_type.value)
                     mc_data_normalized.add(mc_dat)
                 if mc_data != mc_data_normalized:
-                    #num_normalized_parts_with_different_mcs += 1
                     num_discrepancies += 1
         return num_discrepancies
 
@@ -396,14 +432,14 @@ class AssemblyInfo:
 
         #batches = [Batch.from_data_list(lst) for lst in datalists]
 
-        datalist = [BrepGraphData(part, uvnet_features=self.use_uvnet_features) for part in self.normalized_parts]
+        datalist = [BrepGraphData(part, uvnet_features=self.use_uvnet_features) for part in self.parts]
         batch = Batch.from_data_list(datalist)
         
         #proposal indices are local to each part's mate connector set
         #get mate connector and its topological references, and offset them by the appropriate amount based on where they are in batch
-        part2offset = [0] * len(self.normalized_parts)
+        part2offset = [0] * len(self.parts)
         offset = 0
-        for i,part in enumerate(self.normalized_parts[:-1]):
+        for i,part in enumerate(self.parts[:-1]):
             offset += part.num_topologies
             part2offset[i+1] = offset
 
@@ -505,7 +541,7 @@ class AssemblyInfo:
         for part_pair in indices_by_part:
             key_indices = indices_by_part[part_pair]
             topo_offsets = [part2offset[partid] for partid in part_pair]
-            pair_mc_lists = [self.normalized_parts[pi].all_mate_connectors for pi in part_pair]
+            pair_mc_lists = [self.parts[pi].all_mate_connectors for pi in part_pair]
             for i in key_indices:
                 _, mc_pair, mateId = mc_keys[i]
                 mcs = [pair_mc_list[mci] for pair_mc_list, mci in zip(pair_mc_lists, mc_pair)]
@@ -555,7 +591,8 @@ if __name__ == '__main__2':
     datapath = '/projects/grail/benjones/cadlab'
     loader = brepio.Loader(datapath)
     #geo, mates = loader.load_flattened('87688bb8ccd911995ddc048c_6313170efcc25a6f36e56906_8ee5e722ed4853b12db03877.json', skipInvalid=True, geometry=False)
-    geo, mates = loader.load_flattened('e04c8a49d30adb3a5c0f1deb_3d9b45359a15b248f75e41a2_070617843f30f132ab9e6661.json', skipInvalid=True, geometry=False)
+    #geo, mates = loader.load_flattened('e04c8a49d30adb3a5c0f1deb_3d9b45359a15b248f75e41a2_070617843f30f132ab9e6661.json', skipInvalid=True, geometry=False)
+    geo, mates = loader.load_flattened('606a34c3ae6c15f66927c70c_d51a9d7f048ae0e6dd2fd019_58acb7145b75d3d8d1937568.json', skipInvalid=True, geometry=False)
     occ_ids = list(geo.keys())
     part_paths = []
     transforms = []
