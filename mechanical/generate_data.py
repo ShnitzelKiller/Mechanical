@@ -121,7 +121,7 @@ def main():
             part_paths.append(path)
             transforms.append(part_subset.iloc[j]['Transform'])
             occ_ids.append(part_subset.iloc[j]['PartOccurrenceID'])
-        
+
         assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
         num_topologies = assembly_info.num_topologies()
         LOG(f'initialized AssemblyInfo with {num_topologies} topologies')
@@ -131,7 +131,6 @@ def main():
                 LOG(f'part {j} has valid bit {part.valid}, and length of node type vector is {len(part.node_types)}')
             #assert(part.num_topologies == len(part.node_types))
         
-        num_invalid_parts = -1
         skipped = True
         if assembly_info.stats['initialized']:
             #LOG(f'normalization_matrices:{assembly_info.norm_matrices}')

@@ -129,11 +129,17 @@ class AssemblyInfo:
                 
                 self.precompute_geometry()
 
-                assert(all(len(x)==len(self.parts) for x in [self.part_paths, self.part_caches, \
+                list_of_lists = [self.parts, self.part_paths, self.part_caches, \
                         self.occ_transforms, self.occ_to_index, self.occ_ids, self.mc_origins_all, \
                         self.mc_rots_all, self.mc_rots_homogenized_all, \
                         self.mco_hashes, self.mcz_hashes, self.mcr_hashes, \
-                        self.mate_transforms, self.part_transforms]))
+                        self.mate_transforms, self.part_transforms]
+                try:
+                    assert(all(len(x)==len(self.parts) for x in list_of_lists))
+                except AssertionError as e:
+                    e.args += (self.stats, [len(lst) for lst in list_of_lists])
+                    raise
+                
 
         assert([self.occ_to_index[occi] == i for i, occi in enumerate(self.occ_ids)])
         assert([self.occ_ids[self.occ_to_index[occi]] == occi for occi in self.occ_to_index])
@@ -150,13 +156,14 @@ class AssemblyInfo:
         self.stats['num_normalized_parts_with_discrepancies'] = self._num_normalized_parts_with_discrepancies(transformed_parts)
 
         #filter out invalid ones from the existing structures:
-        num_invalid = self.num_invalid_parts()
+        num_invalid = sum([not part.valid for part in transformed_parts])
         self.stats['num_invalid_transformed_parts'] = num_invalid
         if num_invalid > 0:
             for part, occ in zip(transformed_parts, self.occ_ids):
                 if not part.valid:
                     self.invalid_occs.add(occ)
-            self.parts, self.part_paths, self.part_caches, norm_matrices, self.occ_ids = zip([group for group in zip(transformed_parts, self.part_paths, self.part_caches, norm_matrices, self.occ_ids) if group[0].valid])
+            
+            self.parts, self.part_paths, self.part_caches, norm_matrices, self.occ_transforms, self.occ_ids = zip(*[group for group in zip(transformed_parts, self.part_paths, self.part_caches, norm_matrices, self.occ_transforms, self.occ_ids) if group[0].valid])
             self.recompute_map()
         else:
             self.parts = transformed_parts
@@ -169,28 +176,28 @@ class AssemblyInfo:
     def precompute_geometry(self):
         #analyze mate connectors
         for tf,part in zip(self.part_transforms, self.parts):
-            if part.valid:
-                mc_origins = []
-                mc_rots = []
-                for mc in part.all_mate_connectors:
-                    cs = mc.get_coordinate_system()
-                    cs_transformed = tf @ cs
-                    origin, rot = cs_to_origin_frame(cs_transformed)
-                    mc_origins.append(origin)
-                    mc_rots.append(rot)
+            assert(part.valid)
+            mc_origins = []
+            mc_rots = []
+            for mc in part.all_mate_connectors:
+                cs = mc.get_coordinate_system()
+                cs_transformed = tf @ cs
+                origin, rot = cs_to_origin_frame(cs_transformed)
+                mc_origins.append(origin)
+                mc_rots.append(rot)
 
-                self.mc_rots_all.append(mc_rots)
-                self.mc_origins_all.append(mc_origins)
-                mc_rots_homogenized = [homogenize_frame(rot, z_flip_only=True) for rot in mc_rots]
-                self.mc_rots_homogenized_all.append(mc_rots_homogenized)
+            self.mc_rots_all.append(mc_rots)
+            self.mc_origins_all.append(mc_origins)
+            mc_rots_homogenized = [homogenize_frame(rot, z_flip_only=True) for rot in mc_rots]
+            self.mc_rots_homogenized_all.append(mc_rots_homogenized)
 
-                mc_rays = [np.concatenate([origin,rot[:,2]]) for origin, rot in zip(mc_origins, mc_rots_homogenized)]
-                origin_hash = NNHash(mc_origins, 3, self.epsilon_rel)
-                z_hash = NNHash([rot[:,2] for rot in mc_rots_homogenized], 3, self.epsilon_rel)
-                ray_hash = NNHash(mc_rays, 6, self.epsilon_rel)
-                self.mco_hashes.append(origin_hash)
-                self.mcz_hashes.append(z_hash)
-                self.mcr_hashes.append(ray_hash)
+            mc_rays = [np.concatenate([origin,rot[:,2]]) for origin, rot in zip(mc_origins, mc_rots_homogenized)]
+            origin_hash = NNHash(mc_origins, 3, self.epsilon_rel)
+            z_hash = NNHash([rot[:,2] for rot in mc_rots_homogenized], 3, self.epsilon_rel)
+            ray_hash = NNHash(mc_rays, 6, self.epsilon_rel)
+            self.mco_hashes.append(origin_hash)
+            self.mcz_hashes.append(z_hash)
+            self.mcr_hashes.append(ray_hash)
 
     def find_mated_pairs(self, mate):
         """
@@ -215,7 +222,10 @@ class AssemblyInfo:
         if len(mate.matedEntities) != 2:
             raise ValueError
         
-        part_indices = [self.occ_to_index[me[0]] for me in mate.matedEntities]
+        try:
+            part_indices = [self.occ_to_index[me[0]] for me in mate.matedEntities]
+        except KeyError:
+            return -1, -1, []
 
         mate_origins = []
         mate_rots_homogenized = []
@@ -463,6 +473,7 @@ class AssemblyInfo:
         match_start = time.time()
         missed_mates = 0
         missed_part_pairs = 0
+        invalid_mates = 0
         for i,(mate, mate_stat) in enumerate(zip(mates, self.mate_stats)):
             part1, part2, matches = self.find_mated_pairs(mate)
             if part1 > part2:
@@ -485,6 +496,10 @@ class AssemblyInfo:
                 missed_part_pairs += 1
             if not mate_stat['found_by_heuristic']:
                 missed_mates += 1
+            mate_stat['has_invalid_parts'] = part1 < 0 or part2 < 0
+            if mate_stat['has_invalid_parts']:
+                invalid_mates += 1
+        self.stats['invalid_mates'] = invalid_mates
         self.stats['match_time'] = time.time() - match_start
         self.stats['missed_mates'] = missed_mates
         self.stats['missed_part_pairs'] = missed_part_pairs
@@ -572,8 +587,8 @@ if __name__ == '__main__':
     import onshape.brepio as brepio
     datapath = '/projects/grail/benjones/cadlab'
     loader = brepio.Loader(datapath)
-    #geo, mates = loader.load_flattened('87688bb8ccd911995ddc048c_6313170efcc25a6f36e56906_8ee5e722ed4853b12db03877.json', skipInvalid=True, geometry=False)
-    geo, mates = loader.load_flattened('e4803faed1b9357f8db3722c_ce43730c0f1758f756fc271f_c00b5256d7e874e534c083e8.json', skipInvalid=True, geometry=False)
+    geo, mates = loader.load_flattened('7886c69b1f149069e7a43bdb_b809b448b6da81db4b2388a0_1dc646f33c96254f526ea650.json', skipInvalid=True, geometry=False)
+    #geo, mates = loader.load_flattened('e4803faed1b9357f8db3722c_ce43730c0f1758f756fc271f_c00b5256d7e874e534c083e8.json', skipInvalid=True, geometry=False)
     occ_ids = list(geo.keys())
     part_paths = []
     transforms = []
@@ -582,10 +597,14 @@ if __name__ == '__main__':
         assert(os.path.isfile(path))
         part_paths.append(path)
         transforms.append(geo[id][0])
-
+    #print(part_paths, occ_ids)
     assembly_info = AssemblyInfo(part_paths, transforms, occ_ids)
     batch = assembly_info.create_batches(mates)
-    assert(all([mate_stat['found_by_heuristic'] for mate_stat in assembly_info.mate_stats]))
+    try:
+        assert(all([mate_stat['found_by_heuristic'] for mate_stat in assembly_info.mate_stats]))
+    except AssertionError as e:
+        e.args += (assembly_info.stats,assembly_info.mate_stats)
+        raise
 
 
 if __name__ == '__main__2':
