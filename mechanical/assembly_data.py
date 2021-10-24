@@ -422,7 +422,7 @@ class AssemblyInfo:
         """
         Create a list of batches of BrepData objects for this assembly. Returns False if any part has too many topologies to fit in a batch.
         """
-        
+        self.stats['num_mates'] = len(mates)
         self.mate_stats = [dict() for mate in mates]
         
         #datalists = []
@@ -466,43 +466,47 @@ class AssemblyInfo:
             proposals_pooled[part_pair] = mc_dict[best_mc_pair]
 
         self.stats['proposal_time'] = time.time() - proposal_start
-        self.stats['num_proposals'] = len(proposals)
+        self.stats['num_proposals'] = sum(len(proposals[pair]) for pair in proposals)
 
 
         #record any ground truth mates that agree with the proposals
         match_start = time.time()
-        missed_mates = 0
         missed_part_pairs = 0
-        invalid_mates = 0
+        num_invalid_mates = 0
         for i,(mate, mate_stat) in enumerate(zip(mates, self.mate_stats)):
             part1, part2, matches = self.find_mated_pairs(mate)
-            if part1 > part2:
-                part1, part2 = part2, part1
-                matches = [(match[1], match[0]) for match in matches]
-            
-            mate_stat['num_matches'] = len(matches)
-            mate_stat['found_by_heuristic'] = False
-
-            part_pair = part1, part2
-            if part_pair in proposals:
-                num_matches = 0
-                for match in matches:
-                    if match in proposals[part_pair]:
-                        proposals[part_pair][match][2] = i
-                        num_matches += 1
-                if num_matches > 0:
-                    mate_stat['found_by_heuristic'] = True
-            else:
-                missed_part_pairs += 1
-            if not mate_stat['found_by_heuristic']:
-                missed_mates += 1
+            mate_stat['num_possible_mc_pairs'] = len(matches)
             mate_stat['has_invalid_parts'] = part1 < 0 or part2 < 0
             if mate_stat['has_invalid_parts']:
-                invalid_mates += 1
-        self.stats['invalid_mates'] = invalid_mates
+                num_invalid_mates += 1
+                mate_stat['num_possible_proposed_mc_pairs'] = 0
+                mate_stat['found_by_heuristic'] = False
+            else:
+                if part1 > part2:
+                    part1, part2 = part2, part1
+                    matches = [(match[1], match[0]) for match in matches]
+                
+                mate_stat['found_by_heuristic'] = False
+
+                part_pair = part1, part2
+                if part_pair in proposals:
+                    num_matching_proposals = 0
+                    for match in matches:
+                        if match in proposals[part_pair]:
+                            proposals[part_pair][match][2] = i
+                            num_matching_proposals += 1
+                    mate_stat['num_possible_proposed_mc_pairs'] = num_matching_proposals
+                else:
+                    missed_part_pairs += 1
+            
+            mate_stat['found_by_heuristic'] = mate_stat['num_possible_proposed_mc_pairs'] > 0
+            mate_stat['has_matching_connectors'] = len(matches) > 0
+            
+        self.stats['invalid_mates'] = num_invalid_mates
+        self.stats['num_mates_not_matched'] = sum([not mate_stat['has_matching_connectors'] for mate_stat in self.mate_stats])
+        self.stats['num_mates_missed_by_heuristics'] = sum([not mate_stat['found_by_heuristic'] for mate_stat in self.mate_stats])
+        self.stats['num_part_pairs_missed_by_heuristics'] = missed_part_pairs
         self.stats['match_time'] = time.time() - match_start
-        self.stats['missed_mates'] = missed_mates
-        self.stats['missed_part_pairs'] = missed_part_pairs
 
 
         truncation_start = time.time()

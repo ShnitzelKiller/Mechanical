@@ -7,6 +7,9 @@ from onshape.brepio import Mate
 import torch
 import shutil
 
+import json
+import numpy as np
+
 def main():
     parser = ArgumentParser(allow_abbrev=False, conflict_handler='resolve')
     parser.add_argument('--out_path', required=True)
@@ -97,7 +100,6 @@ def main():
     all_mate_stats = []
     processed_indices = []
     mate_indices = []
-    invalid_part_paths_and_transforms = []
 
     run_start_time = time.time()
     if stop_index < 0:
@@ -115,17 +117,26 @@ def main():
         transforms = []
         occ_ids = []
 
+        #TEMPORARY: Load correct transforms, and also save them separately
+        with open(os.path.join(datapath, 'data/flattened_assemblies', assembly_df.loc[ind, "AssemblyPath"] + '.json')) as f:
+            assembly_def = json.load(f)
+        part_occs = assembly_def['part_occurrences']
+        tf_dict = dict()
+        for occ in part_occs:
+            tf_dict[occ['id']] = np.array(occ['transform']).reshape(4, 4)
+
         for j in range(part_subset.shape[0]):
             path = os.path.join(datapath, 'data/models', *[part_subset.iloc[j][k] for k in ['did','mv','eid','config']], f'{part_subset.iloc[j]["PartId"]}.xt')
             assert(os.path.isfile(path))
             part_paths.append(path)
-            transforms.append(part_subset.iloc[j]['Transform'])
-            occ_ids.append(part_subset.iloc[j]['PartOccurrenceID'])
+            occ_id = part_subset.iloc[j]['PartOccurrenceID']
+            transforms.append(tf_dict[occ_id])
+            occ_ids.append(occ_id)
 
         assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
         num_topologies = assembly_info.num_topologies()
         LOG(f'initialized AssemblyInfo with {num_topologies} topologies')
-        LOG(f'topologies per part: {[part.num_topologies for part in assembly_info.parts]}')
+        # LOG(f'topologies per part: {[part.num_topologies for part in assembly_info.parts]}')
         for j,part in enumerate(assembly_info.parts):
             if part.num_topologies != len(part.node_types):
                 LOG(f'part {j} has valid bit {part.valid}, and length of node type vector is {len(part.node_types)}')
@@ -159,11 +170,7 @@ def main():
             stats = assembly_info.stats
             mate_stats = assembly_info.mate_stats
 
-            stats['num_mates'] = mate_subset.shape[0]
             stats['num_mcs'] = assembly_info.num_mate_connectors()
-            stats['num_invalid_frames'] = sum([mate_stat['num_matches'] == 0 for mate_stat in mate_stats])
-            stats['num_mates_not_detected'] = sum([not mate_stat['found_by_heuristic'] for mate_stat in mate_stats])
-            #stats['too_big'] = tooBig
             stats['skipped'] = skipped
             
             all_stats.append(stats)
@@ -187,8 +194,6 @@ def main():
 
     stats_df = ps.DataFrame(all_stats, index=processed_indices)
     stats_df.fillna(value=replace_keys, inplace=True)
-    print(all_stats)
-    print(stats_df)
     stats_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))
     mate_stats_df = ps.DataFrame(all_mate_stats, index=mate_indices)
     mate_stats_df.to_parquet(os.path.join(statspath, 'mate_stats_all.parquet'))
