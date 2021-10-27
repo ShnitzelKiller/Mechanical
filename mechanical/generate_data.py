@@ -9,6 +9,20 @@ import shutil
 
 import json
 import numpy as np
+import random
+
+def generate_datalists(out_path, validation_split, name):
+    datapath = os.path.join(out_path, 'data')
+    datalist = [entry.name for entry in os.scandir(datapath) if entry.name.endswith('.dat')]
+    random.shuffle(datalist)
+    split_ind = int(len(datalist) * validation_split)
+    validation_datalist = datalist[:split_ind]
+    train_datalist = datalist[split_ind:]
+    with open(os.path.join(out_path, name + '_validation.flist'),'w') as f:
+        f.writelines([data + '\n' for data in validation_datalist])
+    with open(os.path.join(out_path, name + '_train.flist'),'w') as f:
+        f.writelines([data + '\n' for data in train_datalist])
+
 
 def main():
     parser = ArgumentParser(allow_abbrev=False, conflict_handler='resolve')
@@ -24,11 +38,17 @@ def main():
     parser.add_argument('--clear', action='store_true')
     parser.add_argument('--use_uvnet_features', type=bool, default=True)
     parser.add_argument('--last_checkpoint', action='store_true')
+    parser.add_argument('--generate_datalists', type=str, default=None)
+    parser.add_argument('--validation_split', type=float, default=0.2)
     
     #parser.add_argument('--prob_threshold', type=float, default=0.7)
 
     args = parser.parse_args()
     #PROB_THRESHOLD = args.prob_threshold
+
+    if args.generate_datalists is not None:
+        generate_datalists(args.out_path, args.validation_split, args.generate_datalists)
+        exit(0)
 
     start_index = args.start_index
     stop_index = args.stop_index
@@ -106,7 +126,7 @@ def main():
         stop_index = len(assembly_indices)
     for num_processed,ind in enumerate(assembly_indices[start_index:stop_index]):
         print(f'num_processed: {num_processed+start_index}/{len(assembly_indices)}')
-        LOG(f'{num_processed+start_index}/{len(assembly_indices)}: processing {assembly_df.loc[ind,"AssemblyPath"]} at {time.time()-run_start_time}')
+        LOG(f'{num_processed+start_index}/{len(assembly_indices)}: processing {ind} ({assembly_df.loc[ind,"AssemblyPath"]}) at {time.time()-run_start_time}')
 
         part_subset = part_df.loc[ind]
         mate_subset = mate_df.loc[ind]
@@ -137,7 +157,7 @@ def main():
             transforms.append(tf_dict[occ_id])
             occ_ids.append(occ_id)
 
-        assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
+        assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
         num_topologies = assembly_info.num_topologies()
         LOG(f'initialized AssemblyInfo with {num_topologies} topologies')
         # LOG(f'topologies per part: {[part.num_topologies for part in assembly_info.parts]}')
@@ -147,28 +167,35 @@ def main():
             #assert(part.num_topologies == len(part.node_types))
         
         skipped = True
+        has_mc_pairs = False
         if assembly_info.stats['initialized']:
             #LOG(f'normalization_matrices:{assembly_info.norm_matrices}')
             num_invalid_parts = assembly_info.num_invalid_parts()
             assert(num_invalid_parts == 0)
-            skipped = False
-            mates = []
-            for j in range(mate_subset.shape[0]):
-                mate_row = mate_subset.iloc[j]
-                mate = Mate(occIds=[mate_row[f'Part{p+1}'] for p in range(2)],
-                        origins=[mate_row[f'Origin{p+1}'] for p in range(2)],
-                        rots=[mate_row[f'Axes{p+1}'] for p in range(2)],
-                        name=mate_row['Name'],
-                        mateType=mate_row['Type'])
-                mates.append(mate)
-            
-            LOG(f'creating batch data...')
-            batch = assembly_info.create_batches(mates, max_z_groups=max_groups, max_mc_pairs=max_mc_pairs)
-            LOG(str(batch))
-            fname = f'{ind}.dat'
-            torch_datapath = os.path.join(outdatapath, fname)
-            torch.save(batch, torch_datapath)
-            del batch
+            if len(assembly_info.parts) > 1:
+                skipped = False
+                mates = []
+                for j in range(mate_subset.shape[0]):
+                    mate_row = mate_subset.iloc[j]
+                    mate = Mate(occIds=[mate_row[f'Part{p+1}'] for p in range(2)],
+                            origins=[mate_row[f'Origin{p+1}'] for p in range(2)],
+                            rots=[mate_row[f'Axes{p+1}'] for p in range(2)],
+                            name=mate_row['Name'],
+                            mateType=mate_row['Type'])
+                    mates.append(mate)
+                
+                LOG(f'creating batch data...')
+                batch = assembly_info.create_batches(mates, max_z_groups=max_groups, max_mc_pairs=max_mc_pairs)
+                LOG(str(batch))
+                if batch.mc_pair_labels.size(0) > 0:
+                    has_mc_pairs = True
+                    assert(batch.part_edges.size(-1) > 0)
+                    fname = f'{ind}.dat'
+                    torch_datapath = os.path.join(outdatapath, fname)
+                    torch.save(batch, torch_datapath)
+                else:
+                    LOG('skipping due to no mc_pairs')
+                del batch
 
         if save_stats:
             stats = assembly_info.stats
@@ -176,6 +203,7 @@ def main():
 
             stats['num_mcs'] = assembly_info.num_mate_connectors()
             stats['skipped'] = skipped
+            stats['has_mc_pairs'] = has_mc_pairs
             
             all_stats.append(stats)
             processed_indices.append(ind)

@@ -1,3 +1,4 @@
+from logging import log
 import os
 import random
 import time
@@ -67,12 +68,13 @@ class AssemblyInfo:
             self.occ_to_index[occ] = i
               
 
-    def __init__(self, part_paths, transforms, occ_ids, epsilon_rel=0.001, use_uvnet_features=False, max_topologies=10000):
+    def __init__(self, part_paths, transforms, occ_ids, logging_fn, epsilon_rel=0.001, use_uvnet_features=False, max_topologies=10000):
         self.epsilon_rel = epsilon_rel
         self.use_uvnet_features = use_uvnet_features
         self.stats = dict()
         self.mate_stats = []
         self.invalid_occs = set()
+        self.log = logging_fn
 
         self.parts = []
         self.part_paths = []
@@ -220,7 +222,9 @@ class AssemblyInfo:
         epsilon_rel2 = self.epsilon_rel * self.epsilon_rel
 
         if len(mate.matedEntities) != 2:
+            self.log('INCORRECT NUMBER OF MATED ENTITIES:',len(mate.matedEntities))
             raise ValueError
+
         
         try:
             part_indices = [self.occ_to_index[me[0]] for me in mate.matedEntities]
@@ -361,7 +365,7 @@ class AssemblyInfo:
         """
         Find probable mate locations
         `max_z_groups`: maximum number of clusters of mate connector z directions to consider as possible axes
-        Returns: Dictionary from (partId1, partId2) -> (mc1, mc2) -> (ptype, dist)
+        Returns: Dictionary from (partId1, partId2) -> (mc1, mc2) -> (ptype, dist, pointer to mate (default -1))
         where ptype is the type of proposal, and can be:
         - 0: coincident
         - 1: coaxial
@@ -443,12 +447,14 @@ class AssemblyInfo:
         # datalists.append(curr_datalist)
 
         #batches = [Batch.from_data_list(lst) for lst in datalists]
-
+        self.log('Creating initial graph data')
         datalist = [BrepGraphData(part, uvnet_features=self.use_uvnet_features) for part in self.parts]
+        self.log('batching')
         batch = Batch.from_data_list(datalist)
         
         #proposal indices are local to each part's mate connector set
         #get mate connector and its topological references, and offset them by the appropriate amount based on where they are in batch
+        self.log('finding proposals')
         part2offset = [0] * len(self.parts)
         offset = 0
         for i,part in enumerate(self.parts[:-1]):
@@ -581,6 +587,15 @@ class AssemblyInfo:
         batch.part_edges = torch.tensor([key for key in proposals]).T
         batch.part_pair_feats = torch.tensor([proposals_pooled[key][:2] for key in proposals]).T
 
+        #fix broken bboxes
+        degen_inds = (~batch.x[:,-6:].isfinite()).sum(dim=1).nonzero().flatten()
+        degen_partids = batch.graph_idx.flatten()[degen_inds]
+        batch.x[degen_inds,-6:] = 0
+
+        self.stats['invalid_topo_bboxes:'] = len(degen_inds)
+        self.stats['parts_with_invalid_topo_bboxes'] = len(torch.unique(degen_partids))
+
+
         return batch
 
 #test that this assembly has all mates matched and found by heuristics
@@ -588,8 +603,8 @@ if __name__ == '__main__':
     import onshape.brepio as brepio
     datapath = '/projects/grail/benjones/cadlab'
     loader = brepio.Loader(datapath)
-    #geo, mates = loader.load_flattened('7886c69b1f149069e7a43bdb_b809b448b6da81db4b2388a0_1dc646f33c96254f526ea650.json', skipInvalid=True, geometry=False)
-    geo, mates = loader.load_flattened('e4803faed1b9357f8db3722c_ce43730c0f1758f756fc271f_c00b5256d7e874e534c083e8.json', skipInvalid=True, geometry=False)
+    geo, mates = loader.load_flattened('d8a598174bcbceaf7e2194e5_a54ba742eaa71cdd4dcefbaa_f7d8ddb4a32a4bfde5a45d20.json', skipInvalid=True, geometry=False)
+    #geo, mates = loader.load_flattened('e4803faed1b9357f8db3722c_ce43730c0f1758f756fc271f_c00b5256d7e874e534c083e8.json', skipInvalid=True, geometry=False)
     occ_ids = list(geo.keys())
     part_paths = []
     transforms = []
@@ -599,8 +614,12 @@ if __name__ == '__main__':
         part_paths.append(path)
         transforms.append(geo[id][0])
     #print(part_paths, occ_ids)
-    assembly_info = AssemblyInfo(part_paths, transforms, occ_ids)
-    batch = assembly_info.create_batches(mates)
+    assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, print, use_uvnet_features=True)
+    print('num valid parts: ', len(assembly_info.parts))
+    batch = assembly_info.create_batches([mate for mate in mates if len(mate.matedEntities) == 2])
+    degen_inds = (~batch.x[:,35].isfinite()).nonzero().flatten()
+    assert(len(degen_inds) == 0)
+    print(batch)
     try:
         assert(all([mate_stat['found_by_heuristic'] for mate_stat in assembly_info.mate_stats]))
     except AssertionError as e:
