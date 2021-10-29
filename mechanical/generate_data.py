@@ -11,6 +11,53 @@ import json
 import numpy as np
 import random
 
+
+def check_datalists(out_path, name_lst, boundary_check_value, uv_only, log):
+    name = name_lst[0]
+    datapath = os.path.join(out_path, 'data')
+    if len(name_lst) > 1:
+        train_file = os.path.join(out_path, name_lst[1])
+        validation_file = os.path.join(out_path, name_lst[2])
+    else:
+        train_file = os.path.join(out_path, name + '_train.flist')
+        validation_file = os.path.join(out_path, name + '_validation.flist')
+    allfiles = [train_file, validation_file]
+    for k,fname in enumerate(allfiles):
+        newdatalist = []
+        with open(fname,'r') as f:
+            datalist = [os.path.join(datapath, l.rstrip()) for l in f.readlines()]
+        for i,d in enumerate(datalist):
+            if i % 1000 == 0:
+               print(f'processed {i}/{len(datalist)} {["train", "val"][k]} batches')
+            batch = torch.load(d)
+
+            tensors = []
+            if not uv_only:
+                tensors.append(batch.x)
+            else:
+                tensors.append(batch.crv_feat)
+                tensors.append(batch.srf_feat)
+            
+            dataname = f'{["train", "val"][k]} {os.path.split(d)[1]}'
+            if any([t.flatten().min() < -boundary_check_value or t.flatten().max() > boundary_check_value for t in tensors if t.shape[0] > 0]):
+                msg = f'OOB {dataname} with value {[(t.flatten().min().item(), t.flatten().max().item()) for t in tensors]}'
+                print(msg)
+                log(msg)
+            elif batch.mc_pair_labels.sum().item() < 1:
+                msg = f'EMPTY {dataname}'
+                print(msg)
+                log(msg)
+            else:
+                newdatalist.append(d)
+        if len(name_lst) > 3:
+            newfile = os.path.join(out_path, name[3] + ['_train','_validation'][k] + '.flist')
+            print(f'saving filtered datalist as {newfile}')
+            #newfile = os.path.splitext(fname)[0] + '_fixed.flist'
+            with open(newfile,'w') as f:
+                f.writelines([os.path.split(d)[1]+'\n' for d in newdatalist])
+
+            
+
 def generate_datalists(out_path, validation_split, name):
     datapath = os.path.join(out_path, 'data')
     datalist = [entry.name for entry in os.scandir(datapath) if entry.name.endswith('.dat')]
@@ -39,6 +86,9 @@ def main():
     parser.add_argument('--use_uvnet_features', type=bool, default=True)
     parser.add_argument('--last_checkpoint', action='store_true')
     parser.add_argument('--generate_datalists', type=str, default=None)
+    parser.add_argument('--check_datalists', nargs='+', type=str, default=None)
+    parser.add_argument('--boundary_check_value', type=float, default=100)
+    parser.add_argument('--uv_features_only', type=bool, default=True)
     parser.add_argument('--validation_split', type=float, default=0.2)
     
     #parser.add_argument('--prob_threshold', type=float, default=0.7)
@@ -65,6 +115,18 @@ def main():
     statspath = os.path.join(args.out_path, 'stats')
     outdatapath = os.path.join(args.out_path, 'data')
 
+    logfile = os.path.join(statspath, 'log.txt')
+    resumefile = os.path.join(statspath, 'recovery.txt')
+
+    def LOG(st):
+        with open(logfile,'a') as logf:
+            logf.write(st + '\n')
+            logf.flush()
+
+    if args.check_datalists is not None:
+        check_datalists(args.out_path, args.check_datalists, args.boundary_check_value, args.uv_features_only, LOG)
+        exit(0)
+    
     if clear_previous_run and os.path.isdir(statspath):
         print('clearing')
         shutil.rmtree(statspath)
@@ -76,12 +138,6 @@ def main():
         os.mkdir(statspath)
         os.mkdir(outdatapath)
     
-    logfile = os.path.join(statspath, 'log.txt')
-    resumefile = os.path.join(statspath, 'recovery.txt')
-    def LOG(st):
-        with open(logfile,'a') as logf:
-            logf.write(st + '\n')
-            logf.flush()
     
     def record_val(val):
         with open(resumefile, 'w') as f:

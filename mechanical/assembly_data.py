@@ -585,7 +585,7 @@ class AssemblyInfo:
         self.stats['conversion_time'] = time.time() - conversion_start
 
         batch.part_edges = torch.tensor([key for key in proposals]).T
-        batch.part_pair_feats = torch.tensor([proposals_pooled[key][:2] for key in proposals]).T
+        batch.part_pair_feats = torch.tensor([proposals_pooled[key][:2] for key in proposals], dtype=torch.float).T
 
         #fix broken bboxes
         degen_inds = (~batch.x[:,-6:].isfinite()).sum(dim=1).nonzero().flatten()
@@ -597,6 +597,21 @@ class AssemblyInfo:
 
 
         return batch
+    
+
+    def validate_batch(self, batch, mates=None):
+        pfuncs_onehot = batch.x[:,25]
+        pfuncs = pfuncs_onehot.argmax(1)
+        pfuncs_self = []
+        for part in self.parts:
+            graph = part.get_graph()
+            pfuncs_self.append(graph.P)
+        pfuncs_self = np.concatenate(pfuncs_self)
+
+        #Todo: check mates as well
+
+        return all(pfuncs_self == pfuncs.numpy())
+
 
 #test that this assembly has all mates matched and found by heuristics
 if __name__ == '__main__':
