@@ -248,6 +248,7 @@ def connected_components(adj, connectionType = 'any'):
     fasten -> only fastens are considered (find rigidly connected components)
     """
     visited = np.zeros(adj.shape[0], dtype=numba.uint8)
+    labeling = np.zeros(adj.shape[0], dtype=numba.int32)
     maxneighbors = adj.shape[1]//2
     components = 0
     for j in range(len(visited)):
@@ -259,6 +260,7 @@ def connected_components(adj, connectionType = 'any'):
                 if visited[curr]:
                     continue
                 visited[curr] = 1
+                labeling[curr] = components - 1
                 for k in range(maxneighbors):
                     i = adj[curr,k*2]
                     ne = adj[curr,k*2+1]
@@ -269,7 +271,7 @@ def connected_components(adj, connectionType = 'any'):
                         else:
                             if ne == 1:
                                 frontier.append(i)
-    return components
+    return components, labeling
 
 if __name__ == '__main__':
     points = np.random.randn(10, 2)

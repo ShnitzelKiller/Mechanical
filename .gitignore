@@ -2,3 +2,8 @@
 .ipynb_checkpoints/
 __pycache__/
 *.parquet
+*.csv
+*.h5
+data/dataset/
+data/pointclouds/
+*.env

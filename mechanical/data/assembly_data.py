@@ -7,7 +7,7 @@ import numpy.linalg as LA
 import torch
 from torch_geometric.data import Batch
 from pspart import Part, NNHash
-from utils import find_neighbors, inter_group_matches, cluster_points, sizes_to_interval_tree, homogenize_frame
+from mechanical.utils import find_neighbors, inter_group_matches, cluster_points, homogenize_frame
 from scipy.spatial.transform import Rotation as R
 from automate.nn.sbgcn import BrepGraphData
 import torch_scatter
@@ -68,7 +68,7 @@ class AssemblyInfo:
             self.occ_to_index[occ] = i
               
 
-    def __init__(self, part_paths, transforms, occ_ids, logging_fn, epsilon_rel=0.001, use_uvnet_features=False, max_topologies=10000):
+    def __init__(self, part_paths, transforms, occ_ids, logging_fn, epsilon_rel=0.001, use_uvnet_features=False, max_topologies=10000, skip_hashing=False):
         self.epsilon_rel = epsilon_rel
         self.use_uvnet_features = use_uvnet_features
         self.stats = dict()
@@ -595,7 +595,6 @@ class AssemblyInfo:
         self.stats['invalid_topo_bboxes:'] = len(degen_inds)
         self.stats['parts_with_invalid_topo_bboxes'] = len(torch.unique(degen_partids))
 
-
         return batch
     
 
@@ -615,11 +614,11 @@ class AssemblyInfo:
 
 #test that this assembly has all mates matched and found by heuristics
 if __name__ == '__main__':
-    import onshape.brepio as brepio
+    import mechanical.onshape as brepio
     datapath = '/projects/grail/benjones/cadlab'
     loader = brepio.Loader(datapath)
-    geo, mates = loader.load_flattened('d8a598174bcbceaf7e2194e5_a54ba742eaa71cdd4dcefbaa_f7d8ddb4a32a4bfde5a45d20.json', skipInvalid=True, geometry=False)
-    #geo, mates = loader.load_flattened('e4803faed1b9357f8db3722c_ce43730c0f1758f756fc271f_c00b5256d7e874e534c083e8.json', skipInvalid=True, geometry=False)
+    #geo, mates = loader.load_flattened('d8a598174bcbceaf7e2194e5_a54ba742eaa71cdd4dcefbaa_f7d8ddb4a32a4bfde5a45d20.json', skipInvalid=True, geometry=False)
+    geo, mates = loader.load_flattened('e4803faed1b9357f8db3722c_ce43730c0f1758f756fc271f_c00b5256d7e874e534c083e8.json', skipInvalid=True, geometry=False)
     occ_ids = list(geo.keys())
     part_paths = []
     transforms = []

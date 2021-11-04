@@ -1,9 +1,9 @@
 import unittest
-import physics.physics as phys
+import mechanical.physics as phys
 import igl
 import numpy as np
 import math
-import onshape.brepio as brepio
+import mechanical.onshape as onshape
 from utils import adjacency_list, adjacency_list_from_brepdata, homogenize, connected_components, connected_components_dense, adjacency_matrix
 import time
 
@@ -14,7 +14,7 @@ class TestDataAnalysis(unittest.TestCase):
 
 
     def setUp(self):
-        loader = brepio.Loader('/projects/grail/benjones/cadlab')
+        loader = onshape.Loader('/projects/grail/benjones/cadlab')
         self.occs, self.mates = loader.load_flattened('b1962d9eb0863de9d3befdfb_0e59c1f11f56bbf035659f09_a60cbcfa67d608b28ffb10fa.json',geometry=False)
 
     def test_adjacency(self):

@@ -2,8 +2,7 @@ import numpy as np
 import numpy.linalg as la
 import time, math
 from numba import cuda, jit, prange, njit
-import physics.kernels.cuda_kernels as ck
-import physics.kernels.vectormath as vm
+import mechanical.physics.cuda as cm
 import geometry.sampling as sampling
 
 @njit (parallel=True)
@@ -55,11 +54,11 @@ class PhysObject:
 
 
     def get_world_space_inertia_tensor(self):
-        R = vm.quaternion_to_matrix(self.rotation)
+        R = cm.quaternion_to_matrix(self.rotation)
         return R @ self.inertia_tensor @ R.T
 
     def get_world_space_inertia_tensor_inverse(self):
-        R = vm.quaternion_to_matrix(self.rotation)
+        R = cm.quaternion_to_matrix(self.rotation)
         return R @ self.inertia_tensor_inv @ R.T
 
     def get_angular_velocity(self):
@@ -84,7 +83,7 @@ class PhysObject:
         omega = self.get_angular_velocity()
         
         qdot = np.array([0, omega[0], omega[1], omega[2]], np.float32)
-        vm.hamilton_product_host(qdot, self.rotation, qdot)
+        cm.hamilton_product_host(qdot, self.rotation, qdot)
         qdot *= 0.5
         self.rotation += qdot * dt
         self.rotation /= la.norm(self.rotation)
@@ -117,11 +116,11 @@ class Simulator:
         print('copied data to GPU in',end-start)
         
         m = np.sum([obj.points.shape[0] for obj in self.objects])
-        TPB = ck.TPB
+        TPB = cm.TPB
         self.cuda_point_grid_dims = (m + TPB - 1) // TPB
         self.cuda_point_block_dims = TPB
 
-        TPCB = ck.TPB_volume
+        TPCB = cm.TPB_volume
         self.cuda_volume_grid_dims = ((res[0] + TPCB - 1) // TPCB, (res[1] + TPCB - 1) // TPCB, (res[2] + TPCB - 1) // TPCB)
         self.cuda_volume_block_dims = (TPCB, TPCB, TPCB)
         self.num_points = m
@@ -143,13 +142,13 @@ class Simulator:
         self.allstates.append((self.t, [(obj.rotation.copy(), obj.translation.copy()) for obj in self.objects]))
 
     def step(self, dt):
-        ck.empty_grid[self.cuda_volume_grid_dims, self.cuda_volume_block_dims](self.grid_d)
-        ck.populate_grid_kernel[self.cuda_point_grid_dims, self.cuda_point_block_dims](self.points_d[0], self.states_d[0], self.points_d[1], self.states_d[1], self.grid_d, self.bounds_min_d, self.grid_length, self.cell_size)
-        ck.compute_forces[self.cuda_point_grid_dims, self.cuda_point_block_dims](self.forces_d[0], self.points_d[0], self.states_d[0], self.forces_d[1], self.points_d[1], self.states_d[1], self.grid_d, self.bounds_min_d, self.grid_length, self.cell_size, self.spring_constant, self.damping)
+        cm.empty_grid[self.cuda_volume_grid_dims, self.cuda_volume_block_dims](self.grid_d)
+        cm.populate_grid_kernel[self.cuda_point_grid_dims, self.cuda_point_block_dims](self.points_d[0], self.states_d[0], self.points_d[1], self.states_d[1], self.grid_d, self.bounds_min_d, self.grid_length, self.cell_size)
+        cm.compute_forces[self.cuda_point_grid_dims, self.cuda_point_block_dims](self.forces_d[0], self.points_d[0], self.states_d[0], self.forces_d[1], self.points_d[1], self.states_d[1], self.grid_d, self.bounds_min_d, self.grid_length, self.cell_size, self.spring_constant, self.damping)
         
         for j in range(2):
             cuda_grid_dim = (self.objects[j].points.shape[0] + self.cuda_point_block_dims - 1) // self.cuda_point_block_dims
-            ck.reduce_forces_torques[cuda_grid_dim, self.cuda_point_block_dims](self.forces_accum_d[j], self.forces_d[j])
+            cm.reduce_forces_torques[cuda_grid_dim, self.cuda_point_block_dims](self.forces_accum_d[j], self.forces_d[j])
             forces_accum = self.forces_accum_d[j].copy_to_host()
             
             self.objects[j].step(forces_accum[:3], forces_accum[3:], dt)
