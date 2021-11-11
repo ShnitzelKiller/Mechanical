@@ -104,8 +104,43 @@ def occ_to_mesh(g):
     return V, F
 
 
+def plot_mate(geo, mate, p=None, wireframe=False):
+    #badOccs = [k for k in geo if geo[k][1] is None or geo[k][1].V.shape[0] == 0]
+    #print('mated parts:',me[0][0],me[1][0])
+    #if me[0][0] in badOccs or me[1][0] in badOccs:
+    #    print('invalid parts in mate')
+    #    return None
+    me = mate.matedEntities
+    occs = [geo[me[i][0]] for i in range(2)]
+    maxdim = max([max(geo[i[0]][1].V.max(0)-geo[i[0]][1].V.min(0)) for i in me if geo[i[0]][1].V.shape[0] > 0])
 
-def inspect(geo, mates, p=None, wireframe=False, show_parts=True):
+    meshes = [occ_to_mesh(occ) for occ in occs]
+    if wireframe:
+        p.reset()
+        p.add_edges(meshes[0][0], meshes[0][1], shading={'line_color': 'red'})
+        p.add_edges(meshes[1][0], meshes[1][1], shading={'line_color': 'blue'})
+    else:
+        mp.plot(meshes[0][0], meshes[0][1],c=np.array([1, 0, 0]), plot=p)
+        p.add_mesh(meshes[1][0], meshes[1][1],c=np.array([0, 0, 1]))
+
+    for i in range(2):
+        tf = occs[i][0]
+        #print(f'matedCS origin {i}: {me[i][1][0]}')
+        newaxes = tf[:3, :3] @ me[i][1][1]
+        neworigin = tf[:3,:3] @ me[i][1][0] + tf[:3,3]
+        #print(f'transform {i}: {tf}')
+        add_axis(p, neworigin, newaxes[:,0], newaxes[:,1], newaxes[:,2], scale=maxdim/2, mate_type=mate.type)
+        
+        mcf_origins = []
+        for mc in occs[i][1].all_mate_connectors:
+            mcf = mc.get_coordinate_system()
+            mcf_origins.append(tf[:3,:3] @ mcf[:3,3] + tf[:3,3])
+        mcf_origins = np.array(mcf_origins)
+        p.add_points(mcf_origins,shading={'point_size':maxdim/30, 'point_color': 'cyan' if i == 0 else 'pink'})
+        return p
+
+
+def plot_assembly(geo, mates, p=None, wireframe=False, show_parts=True):
     maxdim = max([max(geo[i][1].V.max(0)-geo[i][1].V.min(0)) for i in geo if geo[i][1].V.shape[0] > 0])
     num_parts = len(geo)
     part_index = 0
