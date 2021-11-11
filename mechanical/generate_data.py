@@ -5,11 +5,20 @@ import os
 import time
 from onshape.brepio import Mate
 import torch
-
 import json
 import numpy as np
 import random
+from enum import Enum, auto
+class Mode(Enum):
+    CHECK_BATCHES = auto()
+    CHECK_BOUNDS = auto()
+    ADD_MATE_LABELS = auto()
+    ADD_RIGID_LABELS = auto()
+    GENERATE = auto()
+    ADD_OCC_DATA = auto()
 
+    def __str__(self):
+        return self.name
 
 def check_mates(batch, mates, pair_to_index):
     left_partids = batch.graph_idx.flatten()[batch.mc_pairs[0]]
@@ -138,7 +147,7 @@ def main():
     parser.add_argument('--uv_features_only', type=bool, default=True)
     parser.add_argument('--validation_split', type=float, default=0.2)
     parser.add_argument('--dry_run', action='store_true')
-    parser.add_argument('--mode', choices=['check_batches', 'check_bounds','add_mate_labels','add_rigid_labels', 'generate', 'add_occ_data'], default='generate')
+    parser.add_argument('--mode', choices=list(Mode), default=Mode.GENERATE)
     
     #parser.add_argument('--prob_threshold', type=float, default=0.7)
 
@@ -173,11 +182,11 @@ def main():
     LOG('=========RESTARTING=========')
     LOG(str(args))
 
-    if args.mode == 'check_batches' or args.mode == 'add_mate_labels' or args.mode == 'check_bounds' or args.mode == 'add_rigid_labels' or args.mode == 'add_occ_data':
+    if args.mode == Mode.CHECK_BATCHES or args.mode == Mode.ADD_MATE_LABELS or args.mode == Mode.CHECK_BOUNDS or args.mode == Mode.ADD_RIGID_LABELS or args.mode == Mode.ADD_OCC_DATA:
         LOG_results = Logger(resultsfile)
         LOG_results.clear()
 
-    if args.mode == 'check_bounds':
+    if args.mode == Mode.CHECK_BOUNDS:
         if args.check_datalists is not None:
             check_datalists(args.out_path, args.check_datalists, args.boundary_check_value, args.uv_features_only, args.filter_list, LOG_results)
         else:
@@ -202,7 +211,7 @@ def main():
     mate_df.set_index('Assembly', inplace=True)
     part_df.set_index('Assembly', inplace=True)
 
-    if args.mode == 'generate':
+    if args.mode == Mode.GENERATE:
         if not os.path.isdir(args.out_path):
             os.mkdir(args.out_path)
         if not os.path.isdir(statspath):
@@ -280,7 +289,7 @@ def main():
         fname = f'{ind}.dat'
         torch_datapath = os.path.join(outdatapath, fname)
 
-        if args.mode == 'add_mate_labels' or args.mode == 'check_batches' or args.mode == 'add_rigid_labels' or args.mode == 'add_occ_data':
+        if args.mode == Mode.ADD_MATE_LABELS or args.mode == Mode.CHECK_BATCHES or args.mode == Mode.ADD_RIGID_LABELS or args.mode == Mode.ADD_OCC_DATA:
             if os.path.isfile(torch_datapath):
                 
                 batch = torch.load(torch_datapath)
@@ -300,7 +309,7 @@ def main():
                     part_indices = [occ_to_index[me[0]] for me in mate.matedEntities]
                     pair_to_index[tuple(sorted(part_indices))] = m
 
-                if args.mode == 'add_mate_labels':
+                if args.mode == Mode.ADD_MATE_LABELS:
                     pair_types = torch.full((batch.part_edges.shape[1],), -1, dtype=torch.int64)
                     for k in range(batch.part_edges.shape[1]):
                         key = tuple(t.item() for t in batch.part_edges[:,k])
@@ -313,11 +322,11 @@ def main():
                         batch.pair_types = pair_types
                         torch.save(batch, torch_datapath)
 
-                elif args.mode == 'add_rigid_labels':
+                elif args.mode == Mode.ADD_RIGID_LABELS:
                     if not hasattr(batch, 'rigid_labels') and not DRY_RUN:
                         batch.rigid_labels = torch.tensor(np.array(part_subset['RigidComponentID']), dtype=torch.int64)
                         torch.save(batch, torch_datapath)
-                elif args.mode == 'add_occ_data':
+                elif args.mode == Mode.ADD_OCC_DATA:
                     batch.tfs = torch.stack([torch.tensor(tf, dtype=torch.float) for tf in transforms])
                     batch.paths = rel_part_paths
                     batch.assembly = assembly_df.loc[ind, 'AssemblyPath']
@@ -343,7 +352,7 @@ def main():
                 pass
                 #LOG_results(f'{torch_datapath} missing from directory')
 
-        elif args.mode == 'generate':
+        elif args.mode == Mode.GENERATE:
             assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
             num_topologies = assembly_info.num_topologies()
             LOG(f'initialized AssemblyInfo with {num_topologies} topologies')
@@ -402,7 +411,7 @@ def main():
             del assembly_info
         
     
-    if args.mode == 'generate':
+    if args.mode == Mode.GENERATE:
         stats_df = ps.DataFrame(all_stats, index=processed_indices)
         stats_df.fillna(value=replace_keys, inplace=True)
         stats_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))

@@ -585,7 +585,7 @@ class AssemblyInfo:
         self.stats['conversion_time'] = time.time() - conversion_start
 
         batch.part_edges = torch.tensor([key for key in proposals]).T
-        batch.part_pair_feats = torch.tensor([proposals_pooled[key][:2] for key in proposals], dtype=torch.float).T
+        batch.part_pair_feats = torch.tensor([proposals_pooled[key][:2] for key in proposals], dtype=torch.float).T # row 0: ptype, 1: dist
 
         #fix broken bboxes
         degen_inds = (~batch.x[:,-6:].isfinite()).sum(dim=1).nonzero().flatten()

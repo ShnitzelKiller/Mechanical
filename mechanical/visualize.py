@@ -137,22 +137,27 @@ def plot_mate(geo, mate, p=None, wireframe=False):
             mcf_origins.append(tf[:3,:3] @ mcf[:3,3] + tf[:3,3])
         mcf_origins = np.array(mcf_origins)
         p.add_points(mcf_origins,shading={'point_size':maxdim/30, 'point_color': 'cyan' if i == 0 else 'pink'})
-        return p
+    return p
 
 
-def plot_assembly(geo, mates, p=None, wireframe=False, show_parts=True):
+def plot_assembly(geo, mates, p=None, wireframe=False, show_parts=True, rigid_labels=None):
     maxdim = max([max(geo[i][1].V.max(0)-geo[i][1].V.min(0)) for i in geo if geo[i][1].V.shape[0] > 0])
     num_parts = len(geo)
     part_index = 0
     geo_colors = dict()
-    for i in geo:
+    if rigid_labels is not None:
+        num_rigid_labels = len(set(rigid_labels))
+    for ind,i in enumerate(geo):
         g = geo[i]
         if g[1] is None:
             continue
         V, F = occ_to_mesh(g)
         if V.shape[0] == 0:
             continue
-        colors = np.array(get_color(part_index, num_parts))
+        if rigid_labels is None:
+            colors = np.array(get_color(part_index, num_parts))
+        else:
+            colors = np.array(get_color(rigid_labels[ind], num_rigid_labels))
         geo_colors[i] = colors
         part_index += 1
         if show_parts:

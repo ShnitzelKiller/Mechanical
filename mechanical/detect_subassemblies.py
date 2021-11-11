@@ -1,7 +1,6 @@
 import mechanical.onshape as brepio
 import meshplot as mp
 import numpy as np
-from mechanical.visualize import inspect
 import os
 import pandas as ps
 import json
