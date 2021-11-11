@@ -7,12 +7,51 @@ import numpy as np
 from mechanical.utils import adjacency_list, adjacency_list_from_brepdata, connected_components, homogenize, adjacency_matrix
 import argparse
 
+
+def find_redundant_mates(mate_df):
+    """
+    Indices of mates with the same part, and those with duplicate parts
+    """
+    mate_df_filtered = mate_df[mate_df['Part1'] != mate_df['Part2']]
+    flattened_mateinfo = mate_df_filtered[['Origin1','Origin2','Axes1','Axes2']].apply(lambda x: [tuple(l.flatten()) for l in x])
+    flattened_mateinfo['Assembly'] = mate_df_filtered['Assembly']
+    flattened_mateinfo['Part1'] = mate_df_filtered['Part1']
+    flattened_mateinfo['Part2'] = mate_df_filtered['Part2']
+    flattened_mateinfo['Type'] = mate_df_filtered['Type']
+    return flattened_mateinfo.duplicated(keep='first')
+
+
+def find_multimates(mate_df):
+    mate_df_indexed = mate_df.copy()
+    mate_df_indexed['MateID'] = [str(tup[0]) + '-' + '-'.join(sorted(tup[1:])) for tup in zip(mate_df_indexed['Assembly'], mate_df_indexed['Part1'], mate_df_indexed['Part2'])]
+    mate_df_indexed.set_index('MateID', inplace=True)
+    return mate_df_indexed.index.duplicated(False)
+
+
+def find_nonduplicate_assemblies(assembly_df, deduped_df):
+    """
+    all assemblies that are not duplicates (based on deduplication) and have all loaded geometry. The deduped_df should be in cadlab/data/deduped_assembly_list.parquet
+    """
+    deduped_df.drop('is_unique', axis=1, inplace=True)
+    deduped_df['AssemblyPath'] = ['_'.join(me) for me in zip(deduped_df['assembly_documentId'], deduped_df['assembly_documentMicroversion'], deduped_df['assembly_elementId'])]
+    deduped_df.set_index('AssemblyPath', inplace=True)
+    deduped_df_joined = assembly_df.join(deduped_df, on='AssemblyPath', how='inner')
+    return deduped_df_joined.index
+
+def find_valid_assemblies(part_df):
+    """
+    All assemblies with all geometry (index only includes assemblies with at least 1 part)
+    """
+    return part_df.groupby('Assembly')['HasGeometry'].agg(all)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5')
-    parser.add_argument('--path', default='/projects/grail/jamesn8/projects/mechanical/Mechanical/data/dataset/full_assembly_data')
-    parser.add_argument('--postprocess', choices=['segmentation'])
+    parser.add_argument('--name', default='assembly_data_with_transforms_all.h5')
+    parser.add_argument('--path', default='/fast/jamesn8/assembly_data/')
+    parser.add_argument('--postprocess', choices=['segmentation', 'filtering'])
     parser.add_argument('--progress_interval', type=int, default=100)
+    parser.add_argument('--deduped_df', default='/projects/grail/benjones/cadlab/data/deduped_assembly_list.parquet')
     args = parser.parse_args()
 
     datapath = '/projects/grail/benjones/cadlab'
@@ -112,44 +151,71 @@ def main():
         part_df.to_hdf(FULLNAME,'part')
 
     elif POSTPROCESS == 'segmentation':
-        print('adding rigid component segmentation to data...')
+        part_df = ps.read_hdf(FULLNAME, 'part')
+        if 'RigidComponentID' in part_df.keys():
+            print('Segmentation data already present!')
+        else:
+            print('adding rigid component segmentation to data...')
+            mate_df = ps.read_hdf(FULLNAME, 'mate')
+            assembly_df = ps.read_hdf(FULLNAME, 'assembly')
+
+            part_df_indexed = part_df.set_index('Assembly')
+            mate_df.set_index('Assembly', inplace=True)
+
+            labelings = []
+
+            for k,ass in enumerate(part_df_indexed.index.unique()):
+                if k % PROGRESS_INTERVAL == 0:
+                    print(f'processing assembly {k}/{assembly_df.shape[0]}')
+                num_mates = assembly_df.loc[ass, 'NumBinaryPartMates']
+                num_parts = assembly_df.loc[ass, 'NumParts']
+                part_subset = part_df_indexed.loc[ass,'PartOccurrenceID']
+                if isinstance(part_subset, ps.Series):
+                    assert(num_parts == len(part_subset))
+                else:
+                    assert(isinstance(part_subset, str))
+                    assert(num_parts == 1)
+                if num_mates > 0 and num_parts > 1:
+                    mate_subset = mate_df.loc[ass,['Part1', 'Part2', 'Type']]
+                    records = mate_subset.to_records(index=False) if mate_subset.ndim == 2 else [list(mate_subset)]
+                    adj_list = adjacency_list(list(part_subset), records)
+                    if len(adj_list) > 0:
+                        adj = homogenize(adj_list)
+                    else:
+                        adj = np.zeros([0,0],np.int32)
+                    num_rigid, labeling = connected_components(adj, connectionType='fasten')
+                    assert(assembly_df.loc[ass, 'RigidPieces'] == num_rigid)
+                    labelings += list(labeling)
+                else:
+                    labelings += list(range(num_parts))
+            
+            print('creating updated dataframe')
+            part_df['RigidComponentID'] = labelings
+            part_df.to_hdf(FULLNAME+'_'+POSTPROCESS+'.h5', 'part')
+
+    elif POSTPROCESS == 'filtering':
         part_df = ps.read_hdf(FULLNAME, 'part')
         mate_df = ps.read_hdf(FULLNAME, 'mate')
         assembly_df = ps.read_hdf(FULLNAME, 'assembly')
 
-        part_df_indexed = part_df.set_index('Assembly')
-        mate_df.set_index('Assembly', inplace=True)
+        duplicate_mates = find_redundant_mates(mate_df)
+        mate_df_filtered = mate_df[~duplicate_mates]
 
-        labelings = []
+        multimates = find_multimates(mate_df_filtered)
+        mate_duplicates = mate_df[multimates]
+        multimate_groups = mate_duplicates.groupby(by='MateID')
+        aggregated = multimate_groups.agg({'Type':lambda x: 'FASTENED' if 'FASTENED' in list(x) else '-'.join(sorted(list(x))),'Assembly':lambda x:x[0]})
 
-        for k,ass in enumerate(part_df_indexed.index.unique()):
-            if k % PROGRESS_INTERVAL == 0:
-                print(f'processing assembly {k}/{assembly_df.shape[0]}')
-            num_mates = assembly_df.loc[ass, 'NumBinaryPartMates']
-            num_parts = assembly_df.loc[ass, 'NumParts']
-            part_subset = part_df_indexed.loc[ass,'PartOccurrenceID']
-            if isinstance(part_subset, ps.Series):
-                assert(num_parts == len(part_subset))
-            else:
-                assert(isinstance(part_subset, str))
-                assert(num_parts == 1)
-            if num_mates > 0 and num_parts > 1:
-                mate_subset = mate_df.loc[ass,['Part1', 'Part2', 'Type']]
-                records = mate_subset.to_records(index=False) if mate_subset.ndim == 2 else [list(mate_subset)]
-                adj_list = adjacency_list(list(part_subset), records)
-                if len(adj_list) > 0:
-                    adj = homogenize(adj_list)
-                else:
-                    adj = np.zeros([0,0],np.int32)
-                num_rigid, labeling = connected_components(adj, connectionType='fasten')
-                assert(assembly_df.loc[ass, 'RigidPieces'] == num_rigid)
-                labelings += list(labeling)
-            else:
-                labelings += list(range(num_parts))
+
+
+        deduped_df = ps.read_parquet(args.deduped_df)
+        unique_assemblies = find_nonduplicate_assemblies(assembly_df, deduped_df)
+        assembly_df = assembly_df[unique_assemblies]
+
+        valid_assemblies = find_valid_assemblies(part_df)
+        assembly_df = assembly_df[assembly_df['NumParts'] > 0][valid_assemblies]
+
         
-        print('creating updated dataframe')
-        part_df['RigidComponentID'] = labelings
-        part_df.to_hdf(FULLNAME+'_'+POSTPROCESS+'.h5', 'part')
 
 
 

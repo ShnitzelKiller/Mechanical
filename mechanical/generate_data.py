@@ -1,6 +1,6 @@
 from argparse import ArgumentParser
 import pandas as ps
-from mechanical.data import AssemblyInfo, mate_types
+from mechanical.data import AssemblyInfo, mate_types, cs_from_origin_frame
 import os
 import time
 from onshape.brepio import Mate
@@ -9,6 +9,18 @@ import torch
 import json
 import numpy as np
 import random
+
+
+def check_mates(batch, mates, pair_to_index):
+    left_partids = batch.graph_idx.flatten()[batch.mc_pairs[0]]
+    right_partids = batch.graph_idx.flatten()[batch.mc_pairs[3]]
+    for lid, rid, typ, lbl in zip(left_partids, right_partids, batch.mc_pair_type, batch.mc_pair_labels):
+        if lbl == 1:
+            key = (lid.item(), rid.item())
+            if not (key[0] < key[1]) or mate_types.index(mates[pair_to_index[key]].type) != typ.item():
+                return False
+
+    return True
 
 def df_to_mates(mate_subset):
     mates = []
@@ -107,6 +119,7 @@ def generate_datalists(out_path, validation_split, name):
 def main():
     parser = ArgumentParser(allow_abbrev=False, conflict_handler='resolve')
     parser.add_argument('--out_path', required=True)
+    parser.add_argument('--index_file', default='/projects/grail/jamesn8/projects/mechanical/Mechanical/data/dataset/fully_connected_moving_no_multimates.txt')
     parser.add_argument('--start_index', type=int, default=0)
     parser.add_argument('--stop_index', type=int, default=-1)
     parser.add_argument('--epsilon_rel', type=float, default=0.001)
@@ -124,8 +137,8 @@ def main():
     parser.add_argument('--filter_list', type=str, default=None)
     parser.add_argument('--uv_features_only', type=bool, default=True)
     parser.add_argument('--validation_split', type=float, default=0.2)
-    parser.add_argument('--check_batches', action='store_true')
-    parser.add_argument('--add_mate_labels', action='store_true')
+    parser.add_argument('--dry_run', action='store_true')
+    parser.add_argument('--mode', choices=['check_batches', 'check_bounds','add_mate_labels','add_rigid_labels', 'generate', 'add_occ_data'], default='generate')
     
     #parser.add_argument('--prob_threshold', type=float, default=0.7)
 
@@ -136,6 +149,7 @@ def main():
         generate_datalists(args.out_path, args.validation_split, args.generate_datalists)
         exit(0)
 
+    DRY_RUN = args.dry_run
     start_index = args.start_index
     stop_index = args.stop_index
     epsilon_rel = args.epsilon_rel
@@ -159,12 +173,16 @@ def main():
     LOG('=========RESTARTING=========')
     LOG(str(args))
 
-    if args.check_batches or args.add_mate_labels:
+    if args.mode == 'check_batches' or args.mode == 'add_mate_labels' or args.mode == 'check_bounds' or args.mode == 'add_rigid_labels' or args.mode == 'add_occ_data':
         LOG_results = Logger(resultsfile)
         LOG_results.clear()
 
-    if args.check_datalists is not None:
-        check_datalists(args.out_path, args.check_datalists, args.boundary_check_value, args.uv_features_only, args.filter_list, LOG)
+    if args.mode == 'check_bounds':
+        if args.check_datalists is not None:
+            check_datalists(args.out_path, args.check_datalists, args.boundary_check_value, args.uv_features_only, args.filter_list, LOG_results)
+        else:
+            print('need to specify datalists to check, and name for filtered list')
+            exit(1)
         exit(0)
     
     # if clear_previous_run and os.path.isdir(statspath):
@@ -172,11 +190,24 @@ def main():
     #     shutil.rmtree(statspath)
     #     shutil.rmtree(outdatapath)
 
-    if not os.path.isdir(args.out_path):
-        os.mkdir(args.out_path)
-    if not os.path.isdir(statspath):
-        os.mkdir(statspath)
-        os.mkdir(outdatapath)
+    LOG('loading dataframes...')
+    datapath = '/projects/grail/benjones/cadlab'
+    df_name = '/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5'
+    updated_df_name = '/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5_segmentation.h5'
+    assembly_df = ps.read_hdf(df_name,'assembly')
+    mate_df = ps.read_hdf(df_name,'mate')
+    part_df = ps.read_hdf(updated_df_name,'part')
+    mate_df['MateIndex'] = mate_df.index
+    part_df['PartIndex'] = part_df.index
+    mate_df.set_index('Assembly', inplace=True)
+    part_df.set_index('Assembly', inplace=True)
+
+    if args.mode == 'generate':
+        if not os.path.isdir(args.out_path):
+            os.mkdir(args.out_path)
+        if not os.path.isdir(statspath):
+            os.mkdir(statspath)
+            os.mkdir(outdatapath)
     
     
     def record_val(val):
@@ -187,25 +218,14 @@ def main():
     def read_val():
         with open(resumefile,'r') as f:
             return int(f.read())
-    
+
     if args.last_checkpoint:
         start_index = read_val()
 
     replace_keys={'truncated_mc_pairs': False, 'invalid_bbox': False}
 
-    LOG('loading dataframes...')
-    datapath = '/projects/grail/benjones/cadlab'
-    df_name = '/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5'
-    assembly_df = ps.read_hdf(df_name,'assembly')
-    mate_df = ps.read_hdf(df_name,'mate')
-    part_df = ps.read_hdf(df_name,'part')
-    mate_df['MateIndex'] = mate_df.index
-    part_df['PartIndex'] = part_df.index
-    mate_df.set_index('Assembly', inplace=True)
-    part_df.set_index('Assembly', inplace=True)
 
-
-    with open('fully_connected_moving_no_multimates.txt','r') as f:
+    with open(args.index_file,'r') as f:
         assembly_indices = [int(l.rstrip()) for l in f.readlines()]
 
     last_ckpt = 0
@@ -227,78 +247,103 @@ def main():
         if mate_subset.ndim == 1:
             mate_subset = ps.DataFrame([mate_subset], columns=mate_subset.keys())
         
-        part_paths = []
-        transforms = []
+
         occ_ids = list(part_subset['PartOccurrenceID'])
+        part_paths = []
+        rel_part_paths = []
+        transforms = []
 
         #TEMPORARY: Load correct transforms, and also save them separately
-        if not args.add_mate_labels:
-            with open(os.path.join(datapath, 'data/flattened_assemblies', assembly_df.loc[ind, "AssemblyPath"] + '.json')) as f:
-                assembly_def = json.load(f)
-            part_occs = assembly_def['part_occurrences']
-            tf_dict = dict()
-            for occ in part_occs:
-                tf = np.array(occ['transform']).reshape(4, 4)
-                # npyname = f'/fast/jamesn8/assembly_data/transform64_cache/{ind}.npy'
-                # if not os.path.isfile(npyname):
-                #     np.save(npyname, tf)
-                tf_dict[occ['id']] = tf
+        #if args.mode == 'generate':
+        with open(os.path.join(datapath, 'data/flattened_assemblies', assembly_df.loc[ind, "AssemblyPath"] + '.json')) as f:
+            assembly_def = json.load(f)
+        part_occs = assembly_def['part_occurrences']
+        tf_dict = dict()
+        for occ in part_occs:
+            tf = np.array(occ['transform']).reshape(4, 4)
+            # npyname = f'/fast/jamesn8/assembly_data/transform64_cache/{ind}.npy'
+            # if not os.path.isfile(npyname):
+            #     np.save(npyname, tf)
+            tf_dict[occ['id']] = tf
 
-            for j in range(part_subset.shape[0]):
-                path = os.path.join(datapath, 'data/models', *[part_subset.iloc[j][k] for k in ['did','mv','eid','config']], f'{part_subset.iloc[j]["PartId"]}.xt')
-                assert(os.path.isfile(path))
-                part_paths.append(path)
-                occ_id = part_subset.iloc[j]['PartOccurrenceID']
-                transforms.append(tf_dict[occ_id])
+        for j in range(part_subset.shape[0]):
+            rel_path = os.path.join(*[part_subset.iloc[j][k] for k in ['did','mv','eid','config']], f'{part_subset.iloc[j]["PartId"]}.xt')
+            path = os.path.join(datapath, 'data/models', rel_path)
+            assert(os.path.isfile(path))
+            rel_part_paths.append(rel_path)
+            part_paths.append(path)
+            #if args.mode == 'generate':
+            transforms.append(tf_dict[occ_ids[j]])
+            #else:
+            #    transforms.append(part_subset.iloc[j]['Transform'])
         
         fname = f'{ind}.dat'
         torch_datapath = os.path.join(outdatapath, fname)
 
-        if args.add_mate_labels or args.check_batches:
+        if args.mode == 'add_mate_labels' or args.mode == 'check_batches' or args.mode == 'add_rigid_labels' or args.mode == 'add_occ_data':
             if os.path.isfile(torch_datapath):
+                
                 batch = torch.load(torch_datapath)
-
                 num_parts = torch.unique(batch.graph_idx.flatten()).size(0)
+
                 if num_parts != part_subset.shape[0]:
                     LOG_results(f'{ind} contains {num_parts} graph ids but assembly has {part_subset.shape[0]} parts')
                     print('skipping',ind)
                     continue
 
-                if args.add_mate_labels:
-                    occ_to_index = dict()
-                    for i,occ in enumerate(occ_ids):
-                        occ_to_index[occ] = i
-                    
-                    mates = df_to_mates(mate_subset)
-                    pair_to_type = dict()
+                occ_to_index = dict()
+                for i,occ in enumerate(occ_ids):
+                    occ_to_index[occ] = i
+                pair_to_index = dict()
+                mates = df_to_mates(mate_subset)
+                for m,mate in enumerate(mates):
+                    part_indices = [occ_to_index[me[0]] for me in mate.matedEntities]
+                    pair_to_index[tuple(sorted(part_indices))] = m
 
-                    for mate in mates:
-                        part_indices = [occ_to_index[me[0]] for me in mate.matedEntities]
-                        pair_to_type[tuple(sorted(part_indices))] = mate_types.index(mate.type)
-                    
+                if args.mode == 'add_mate_labels':
                     pair_types = torch.full((batch.part_edges.shape[1],), -1, dtype=torch.int64)
                     for k in range(batch.part_edges.shape[1]):
                         key = tuple(t.item() for t in batch.part_edges[:,k])
                         assert(key[0] < key[1])
-                        if key in pair_to_type:
-                            pair_types[k] = pair_to_type[key]
+                        if key in pair_to_index:
+                            pair_types[k] = mate_types.index(mates[pair_to_index[key]].type)
                     
-                    left_partids = batch.graph_idx.flatten()[batch.mc_pairs[0]]
-                    right_partids = batch.graph_idx.flatten()[batch.mc_pairs[3]]
-                    for lid, rid, typ, lbl in zip(left_partids, right_partids, batch.mc_pair_type, batch.mc_pair_labels):
-                        if lbl == 1:
-                            key = (lid.item(), rid.item())
-                            assert(key[0] < key[1])
-                            assert(pair_to_type[key] == typ.item())
-                    
-                    batch.pair_types = pair_types
-                    torch.save(batch, torch_datapath)
-            
+                    assert(check_mates(batch, mates, pair_to_index))
+                    if not DRY_RUN:
+                        batch.pair_types = pair_types
+                        torch.save(batch, torch_datapath)
 
-                    
+                elif args.mode == 'add_rigid_labels':
+                    if not hasattr(batch, 'rigid_labels') and not DRY_RUN:
+                        batch.rigid_labels = torch.tensor(np.array(part_subset['RigidComponentID']), dtype=torch.int64)
+                        torch.save(batch, torch_datapath)
+                elif args.mode == 'add_occ_data':
+                    batch.tfs = torch.stack([torch.tensor(tf, dtype=torch.float) for tf in transforms])
+                    batch.paths = rel_part_paths
+                    batch.assembly = assembly_df.loc[ind, 'AssemblyPath']
 
-        else:
+                    #populate mate frames
+                    mate_frames = torch.empty((len(mates), 2, 4, 4), dtype=torch.float) #mate frame tensor
+                    pair_indices = torch.full((batch.part_edges.shape[1],), -1, dtype=torch.int64) #part pair to mate index tensor
+                    for k in range(batch.part_edges.shape[1]):
+                        key = tuple(t.item() for t in batch.part_edges[:,k])
+                        assert(key[0] < key[1])
+                        if key in pair_to_index:
+                            pair_indices[k] = pair_to_index[key]
+                    #assert(check_mates(batch, mates, pair_to_index))
+                    for m, mate in enumerate(mates):
+                        mate_frame_np = np.stack([cs_from_origin_frame(me[1][0], me[1][1]) for me in mate.matedEntities])
+                        mate_frames[m] = torch.from_numpy(mate_frame_np).float()
+                    if not DRY_RUN:
+                        batch.mate_frames = mate_frames
+                        batch.pair_indices = pair_indices
+                        torch.save(batch, torch_datapath)
+                #TODO: add mode check_batches with additional sanity checks
+            else:
+                pass
+                #LOG_results(f'{torch_datapath} missing from directory')
 
+        elif args.mode == 'generate':
             assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
             num_topologies = assembly_info.num_topologies()
             LOG(f'initialized AssemblyInfo with {num_topologies} topologies')
@@ -355,8 +400,9 @@ def main():
                     record_val(num_processed + start_index + 1)
 
             del assembly_info
+        
     
-    if not args.add_mate_labels and not args.check_batches:
+    if args.mode == 'generate':
         stats_df = ps.DataFrame(all_stats, index=processed_indices)
         stats_df.fillna(value=replace_keys, inplace=True)
         stats_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))
