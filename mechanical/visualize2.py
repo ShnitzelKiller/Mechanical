@@ -1,6 +1,8 @@
 import numpy as np
-from utils import hsv2rgb, get_color
+from utils import get_color
 import pythreejs as p3s
+import ipywidgets as wg
+
 
 def make_edge_ring(N):
     Ec = np.empty([N, 2], np.int64)
@@ -9,54 +11,53 @@ def make_edge_ring(N):
     Ec[-1,1] = Ec[0,0]
     return Ec
 
-def add_circle(plot, center, u, v, scale, color, N=20):
+
+def make_segments_geometry(points, color, width=5):
+    g2 = p3s.LineSegmentsGeometry(positions=np.roll(np.repeat(points, 2, axis=0), 1, axis=0).reshape((-1, 2, 3)))
+    return p3s.LineSegments2(geometry=g2, material=p3s.LineMaterial(linewidth=width, color=color))
+
+
+def add_circle(lst, center, u, v, scale, color, N=20):
     circ = np.empty([N, 3], dtype=np.float64)
     for i in range(N):
         ang = i/N * np.pi * 2
         circ[i,:] = center + scale * (u * np.cos(ang) + v * np.sin(ang))
-    Ec = make_edge_ring(N)
-    plot.add_edges(circ, Ec, shading={'line_color':color,'line_width':5})
+    
+    lst.append(make_segments_geometry(circ, color))
 
-def add_square(plot, center, u, v, scale, color):
+
+def add_square(lst, center, u, v, scale, color):
     square = np.empty([4, 3], dtype=np.float64)
     square[0,:] = center
     square[1,:] = center + u * scale
     square[2,:] = center + u * scale + v * scale
     square[3,:] = center + v * scale
-    Ec = make_edge_ring(4)
-    plot.add_edges(square, Ec, shading={'line_color':color,'line_width':5})
+    lst.append(make_segments_geometry(square, color))
 
-def add_axis(plot, center, x_dir, y_dir, z_dir, scale=1, mate_type=None):
-    V = np.array([center, center+x_dir * scale, center+y_dir * scale, center+z_dir * scale])
-    Ex = np.array([[0,1]])
-    Ey = np.array([[0,2]])
-    Ez = np.array([[0,3]])
-    plot.add_edges(V, Ex, shading={'line_color':'red','line_width':5})
-    plot.add_edges(V, Ey, shading={'line_color':'green','line_width':5})
-    plot.add_edges(V, Ez, shading={'line_color':'blue','line_width':5})
+def add_axis(center, x_dir, y_dir, z_dir, scale=1, mate_type=None):
     N = 20
+    objects = []
     if mate_type == 'REVOLUTE':
-        add_circle(plot, center, x_dir, y_dir, scale, 'blue', N)
+        add_circle(objects, center, x_dir, y_dir, scale, 'blue', N)
     elif mate_type == 'BALL':
-        add_circle(plot, center, x_dir, y_dir, scale, 'blue', N)
-        add_circle(plot, center, y_dir, z_dir, scale, 'red', N)
-        add_circle(plot, center, z_dir, x_dir, scale, 'green', N)
+        add_circle(objects, center, x_dir, y_dir, scale, 'blue', N)
+        add_circle(objects, center, y_dir, z_dir, scale, 'red', N)
+        add_circle(objects, center, z_dir, x_dir, scale, 'green', N)
     elif mate_type == 'CYLINDRICAL':
-        add_circle(plot, center, x_dir, y_dir, scale, 'cyan', N)
-        add_circle(plot, center+z_dir*scale/2, x_dir, y_dir, scale, 'cyan', N)
+        add_circle(objects, center, x_dir, y_dir, scale, 'cyan', N)
+        add_circle(objects, center+z_dir*scale/2, x_dir, y_dir, scale, 'cyan', N)
     elif mate_type == 'FASTENED':
-        add_square(plot, center, x_dir, y_dir, scale/2, 'blue')
-        add_square(plot, center, y_dir, z_dir, scale/2, 'red')
-        add_square(plot, center, z_dir, x_dir, scale/2, 'blue')
+        add_square(objects, center, x_dir, y_dir, scale/2, 'blue')
+        add_square(objects, center, y_dir, z_dir, scale/2, 'red')
+        add_square(objects, center, z_dir, x_dir, scale/2, 'blue')
     elif mate_type == 'SLIDER':
-        add_square(plot, center, x_dir, y_dir, scale/2, 'cyan')
-        add_square(plot, center+z_dir*scale/2, x_dir, y_dir, scale/2, 'cyan')
+        add_square(objects, center, x_dir, y_dir, scale/2, 'cyan')
+        add_square(objects, center+z_dir*scale/2, x_dir, y_dir, scale/2, 'cyan')
     elif mate_type == 'PLANAR':
-        add_square(plot, center, x_dir, y_dir, scale, 'blue')
+        add_square(objects, center, x_dir, y_dir, scale, 'blue')
     elif mate_type == 'PARALLEL':
-        add_square(plot, center, x_dir, y_dir, scale, 'orange')
-
-
+        add_square(objects, center, x_dir, y_dir, scale, 'orange')
+    return objects
 
 
 def occ_to_mesh(g):
@@ -67,54 +68,19 @@ def occ_to_mesh(g):
     return V, F
 
 
-def plot_mate(geo, mate, p=None, wireframe=False):
-    #badOccs = [k for k in geo if geo[k][1] is None or geo[k][1].V.shape[0] == 0]
-    #print('mated parts:',me[0][0],me[1][0])
-    #if me[0][0] in badOccs or me[1][0] in badOccs:
-    #    print('invalid parts in mate')
-    #    return None
-    me = mate.matedEntities
-    occs = [geo[me[i][0]] for i in range(2)]
-    maxdim = max([max(geo[i[0]][1].V.max(0)-geo[i[0]][1].V.min(0)) for i in me if geo[i[0]][1].V.shape[0] > 0])
-
-    meshes = [occ_to_mesh(occ) for occ in occs]
-    if wireframe:
-        p.reset()
-        p.add_edges(meshes[0][0], meshes[0][1], shading={'line_color': 'red'})
-        p.add_edges(meshes[1][0], meshes[1][1], shading={'line_color': 'blue'})
-    else:
-        mp.plot(meshes[0][0], meshes[0][1],c=np.array([1, 0, 0]), plot=p)
-        p.add_mesh(meshes[1][0], meshes[1][1],c=np.array([0, 0, 1]))
-
-    for i in range(2):
-        tf = occs[i][0]
-        #print(f'matedCS origin {i}: {me[i][1][0]}')
-        newaxes = tf[:3, :3] @ me[i][1][1]
-        neworigin = tf[:3,:3] @ me[i][1][0] + tf[:3,3]
-        #print(f'transform {i}: {tf}')
-        add_axis(p, neworigin, newaxes[:,0], newaxes[:,1], newaxes[:,2], scale=maxdim/2, mate_type=mate.type)
-        
-        mcf_origins = []
-        for mc in occs[i][1].all_mate_connectors:
-            mcf = mc.get_coordinate_system()
-            mcf_origins.append(tf[:3,:3] @ mcf[:3,3] + tf[:3,3])
-        mcf_origins = np.array(mcf_origins)
-        p.add_points(mcf_origins,shading={'point_size':maxdim/30, 'point_color': 'cyan' if i == 0 else 'pink'})
-    return p
-
-
 def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600):
-    maxdim = max([max(geo[i][1].V.max(0)-geo[i][1].V.min(0)) for i in geo if geo[i][1].V.shape[0] > 0])
+    max_part_dim = max([max(geo[i][1].V.max(0)-geo[i][1].V.min(0)) for i in geo if geo[i][1].V.shape[0] > 0])
     num_parts = len(geo)
     part_index = 0
     geo_colors = dict()
+    occ_to_index = dict()
     part_meshes = []
     mcf_points = []
     minPt = np.full((3,), np.inf)
     maxPt = np.full((3,), -np.inf)
-    if rigid_labels is not None:
-        num_rigid_labels = len(set(rigid_labels))
-    for ind,i in enumerate(geo):
+
+    mesh_data = {}
+    for i in geo:
         g = geo[i]
         if g[1] is None:
             continue
@@ -123,6 +89,24 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
             continue
         minPt = np.minimum(minPt, V.min(0))
         maxPt = np.maximum(maxPt, V.max(0))
+        mesh_data[i] = (V, F)
+    
+    meanPt = (minPt + maxPt)/2
+    maxDim = (maxPt - minPt).max()
+
+    if rigid_labels is not None:
+        num_rigid_labels = len(set(rigid_labels))
+    for ind,i in enumerate(geo):
+        occ_to_index[i] = part_index
+        g = geo[i]
+        if g[1] is None:
+            continue
+        
+        if i not in mesh_data:
+            continue
+
+        V, F = mesh_data[i]
+        
         if rigid_labels is None:
             colors = np.array(get_color(part_index, num_parts))
         else:
@@ -141,32 +125,18 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
         mesh = p3s.Mesh(geometry=geometry, material=material)
         part_meshes.append(mesh)
     
-        # mcf_origins = []
-        # tf = g[0]
-        # for mc in g[1].all_mate_connectors:
-        #     mcf = mc.get_coordinate_system()
-        #     mcf_origins.append(tf[:3,:3] @ mcf[:3,3] + tf[:3,3])
-        # mcf_origins = np.array(mcf_origins)
-        # pointgeometry = p3s.BufferGeometry(attributes={'points': p3s.BufferAttribute(mcf_origins.astype(np.float32), normalized=False)})
-        # pointsmaterial = p3s.PointsMaterial(color=f"rgb({colors_int[0]//2},{colors_int[1]//2},{colors_int[2]//2})")
-        # points = p3s.Points(geometry=pointgeometry, material=pointsmaterial)
-        # mcf_points.append(points)
-    
-    meanPt = (minPt + maxPt) / 2
-    maxDim = (maxPt - minPt).max()
-    camera = p3s.PerspectiveCamera( position=tuple(np.array([1, 0.6, 1]) * maxDim), lookAt=meanPt, aspect=view_width/view_height)
-    key_light = p3s.DirectionalLight(position=[0, 10, 10])
-    back_light = p3s.DirectionalLight(position=[0, -10, -10], intensity=0.4)
-    ambient_light = p3s.AmbientLight()
-    scene = p3s.Scene(children=part_meshes + [camera, key_light, back_light, ambient_light])
-    controller = p3s.OrbitControls(controlling=camera, target=tuple(meanPt))
-    renderer = p3s.Renderer(camera=camera, scene=scene, controls=[controller],
-                        width=view_width, height=view_height)
+        mcf_origins = []
+        tf = g[0]
+        for mc in g[1].all_mate_connectors:
+            mcf = mc.get_coordinate_system()
+            mcf_origins.append(tf[:3,:3] @ mcf[:3,3] + tf[:3,3])
+        mcf_origins = np.array(mcf_origins)
+        pointgeometry = p3s.BufferGeometry(attributes={'position': p3s.BufferAttribute(mcf_origins.astype(np.float32), normalized=False)})
+        pointsmaterial = p3s.PointsMaterial(color=f"rgb({colors_int[0]//2},{colors_int[1]//2},{colors_int[2]//2})", size=3, sizeAttenuation=False)
+        points = p3s.Points(geometry=pointgeometry, material=pointsmaterial)
+        mcf_points.append(points)
 
-    return renderer
-
-    mate_origins = []
-    mate_colors = []
+    all_mate_objects = []
     for i,mate in enumerate(mates):
         if mate.type == 'FASTENED' and rigid_labels is not None:
             continue
@@ -175,22 +145,24 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
                 tf = geo[mated[0]][0]
                 newaxes = tf[:3, :3] @ mated[1][1]
                 neworigin = tf[:3,:3] @ mated[1][0] + tf[:3,3]
-                add_axis(plot, neworigin, newaxes[:,0], newaxes[:,1], newaxes[:,2], scale=maxdim/10, mate_type=mate.type)
-                mate_origins.append(neworigin)
-            if mate.matedEntities[0][0] in geo_colors and mate.matedEntities[1][0] in geo_colors:
-                mate_color = 0.5 * (geo_colors[mate.matedEntities[0][0]] + geo_colors[mate.matedEntities[1][0]])
-            else:
-                mate_color = np.zeros(3)
-            mate_colors.append(mate_color)
-            mate_colors.append(mate_color)
-    mate_origins = np.vstack(mate_origins)
-    mate_colors = np.vstack(mate_colors)
-    plot.add_points(mate_origins, c=mate_colors, shading={'point_size':maxdim/10})
-    return plot
+                mate_objects = add_axis(neworigin, newaxes[:,0], newaxes[:,1], newaxes[:,2], scale=maxDim/10, mate_type=mate.type)
+                all_mate_objects += mate_objects
 
-def emptyplot():
-    vd = np.array([[0, 0, 1],
-              [0, 1, 0],
-              [0, 1, 1]], dtype=np.float64)
-    fd = np.array([[0, 1, 2],[2, 1, 0]])
-    return mp.plot(vd, fd)
+    camera = p3s.PerspectiveCamera( position=tuple(np.array([1, 0.6, 1]) * maxDim), lookAt=meanPt, aspect=view_width/view_height)
+    key_light = p3s.DirectionalLight(position=[0, 10, 10])
+    back_light = p3s.DirectionalLight(position=[0, -10, -10], intensity=0.4)
+    ambient_light = p3s.AmbientLight()
+    scene = p3s.Scene(children=part_meshes + mcf_points + all_mate_objects + [camera, key_light, back_light, ambient_light])
+    controller = p3s.OrbitControls(controlling=camera, target=tuple(meanPt))
+    renderer = p3s.Renderer(camera=camera, scene=scene, controls=[controller],
+                        width=view_width, height=view_height)
+    chks = [
+        wg.Checkbox(False, description='wireframe'),
+    ]
+    for mesh in part_meshes:
+        wg.jslink((chks[0], 'value'), (mesh.material, 'wireframe'))
+    
+    hbox = wg.HBox(chks)
+    vbox = wg.VBox([renderer, hbox])
+
+    return vbox
