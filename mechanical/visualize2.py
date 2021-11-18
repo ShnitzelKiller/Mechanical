@@ -1,4 +1,5 @@
 import numpy as np
+from pythreejs.animation.tracks.BooleanKeyframeTrack_autogen import BooleanKeyframeTrack
 from utils import get_color
 import pythreejs as p3s
 import ipywidgets as wg
@@ -60,6 +61,26 @@ def add_axis(center, x_dir, y_dir, z_dir, scale=1, mate_type=None):
     return objects
 
 
+def animation_clip_from_mate(center, x_dir, y_dir, z_dir, scale, movingpart, mate_type, duration=0.5):
+    times = [0, duration, duration * 2]
+    hidetimes = [0, 0.01, duration*2-0.01, duration*2]
+    hidetrack = BooleanKeyframeTrack(name=".visible",
+        times=hidetimes,
+        values=[True, False, False, True]
+    )
+    pos_displacement = [0, 0, 0]
+    quat_displacement = [0, 0, 0, 0]
+    
+    if mate_type == 'SLIDER':
+        pos_displacement = z_dir * scale
+    else:
+        return None, None
+    vector_track = p3s.VectorKeyframeTrack(name=".position",
+        times=times,
+        values=np.array([movingpart.position, movingpart.position + pos_displacement, movingpart.position]).flatten().astype(np.float32)
+        )
+    return p3s.AnimationClip(tracks=[vector_track]), p3s.AnimationClip(tracks=[hidetrack])
+
 def occ_to_mesh(g):
     V = g[1].V.copy()
     F = g[1].F
@@ -69,7 +90,7 @@ def occ_to_mesh(g):
 
 
 def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600):
-    max_part_dim = max([max(geo[i][1].V.max(0)-geo[i][1].V.min(0)) for i in geo if geo[i][1].V.shape[0] > 0])
+    #max_part_dim = max([max(geo[i][1].V.max(0)-geo[i][1].V.min(0)) for i in geo if geo[i][1].V.shape[0] > 0])
     num_parts = len(geo)
     part_index = 0
     geo_colors = dict()
@@ -137,6 +158,8 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
         mcf_points.append(points)
 
     all_mate_objects = []
+    animation_clips = []
+    hide_clips = []
     for i,mate in enumerate(mates):
         if mate.type == 'FASTENED' and rigid_labels is not None:
             continue
@@ -147,6 +170,13 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
                 neworigin = tf[:3,:3] @ mated[1][0] + tf[:3,3]
                 mate_objects = add_axis(neworigin, newaxes[:,0], newaxes[:,1], newaxes[:,2], scale=maxDim/10, mate_type=mate.type)
                 all_mate_objects += mate_objects
+            part_ids = [occ_to_index[me[0]] for me in mate.matedEntities]
+            part2 = part_meshes[part_ids[1]]
+            hiddenparts = {f'obj{i}':part_mesh for i,part_mesh in enumerate(part_meshes) if i not in part_ids}
+            hidegroup = p3s.AnimationObjectGroup(**hiddenparts)
+            animation_clip, hide_clip = animation_clip_from_mate(neworigin, newaxes[:,0], newaxes[:,1], newaxes[:,2], maxDim/5, part2, mate.type)
+            animation_clips.append((part2, animation_clip))
+            #hide_clips.append((hidegroup, hide_clip))
 
     camera = p3s.PerspectiveCamera( position=tuple(np.array([1, 0.6, 1]) * maxDim), lookAt=meanPt, aspect=view_width/view_height)
     key_light = p3s.DirectionalLight(position=[0, 10, 10])
@@ -156,13 +186,20 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
     controller = p3s.OrbitControls(controlling=camera, target=tuple(meanPt))
     renderer = p3s.Renderer(camera=camera, scene=scene, controls=[controller],
                         width=view_width, height=view_height)
+    mate_actions = [p3s.AnimationAction(p3s.AnimationMixer(part_mesh), clip, part_mesh) for part_mesh, clip in animation_clips if clip is not None]
+    #hide_actions = [p3s.AnimationAction(p3s.AnimationMixer(part_group), clip, part_group) for part_group, clip in hide_clips if clip is not None]
+    #sliders = wg.FloatSlider(value=0, min=0, max=mate_actions.)
+
     chks = [
         wg.Checkbox(False, description='wireframe'),
+        wg.Checkbox(True, description='show parts'),
     ]
+
     for mesh in part_meshes:
         wg.jslink((chks[0], 'value'), (mesh.material, 'wireframe'))
+        wg.jslink((chks[1], 'value'), (mesh, 'visible'))
     
     hbox = wg.HBox(chks)
-    vbox = wg.VBox([renderer, hbox])
+    vbox = wg.VBox([renderer, hbox, wg.HBox([mate_actions[0]])])
 
     return vbox
