@@ -4,6 +4,47 @@ from numba import jit, njit
 from intervaltree import IntervalTree, Interval
 import pspart
 
+
+def get_color(index, total):
+    h = index / total * 360
+    intensity = 1
+    rf, gf, bf = hsv2rgb(h, 1.0, 1.0)
+    return rf * intensity, gf * intensity, bf * intensity
+
+def hsv2rgb(h, s, v):
+    c = v * s
+    x = c * (1 - abs((h/60) % 2 - 1))
+    m = v - c
+    if (h >= 0 and h < 60):
+        rp = c
+        gp = x
+        bp = 0
+    elif (h >= 60 and h < 120):
+        rp = x
+        gp = c
+        bp = 0
+    elif (h >= 120 and h < 180):
+        rp = 0
+        gp = c
+        bp = x
+    elif (h >= 180 and h < 240):
+        rp = 0
+        gp = x
+        bp = c
+    elif (h >= 240 and h < 300):
+        rp = x
+        gp = 0
+        bp = c
+    else:
+        rp = c
+        gp = 0
+        bp = x
+    r = rp + m
+    g = gp + m
+    b = bp + m
+    return r, g, b
+
+
 @njit
 def homogenize_sign(vec):
     maxdim = -1
