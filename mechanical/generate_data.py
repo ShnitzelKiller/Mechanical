@@ -1,4 +1,4 @@
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Action
 import pandas as ps
 from mechanical.data import AssemblyInfo, mate_types, cs_from_origin_frame
 import os
@@ -9,16 +9,42 @@ import json
 import numpy as np
 import random
 from enum import Enum, auto
+from pspart import Part
 class Mode(Enum):
-    CHECK_BATCHES = auto()
-    CHECK_BOUNDS = auto()
-    ADD_MATE_LABELS = auto()
-    ADD_RIGID_LABELS = auto()
-    GENERATE = auto()
-    ADD_OCC_DATA = auto()
+    CHECK_BATCHES = "CHECK_BATCHES"
+    CHECK_BOUNDS = "CHECK_BOUNDS"
+    ADD_MATE_LABELS = "ADD_MATE_LABELS"
+    ADD_RIGID_LABELS = "ADD_RIGID_LABELS"
+    GENERATE = "GENERATE"
+    ADD_OCC_DATA = "ADD_OCC_DATA"
+    ADD_MESH_DATA = "ADD_MESH_DATA"
 
-    def __str__(self):
-        return self.name
+class EnumAction(Action):
+    """
+    Argparse action for handling Enums
+    """
+    def __init__(self, **kwargs):
+        # Pop off the type value
+        enum_type = kwargs.pop("type", None)
+
+        # Ensure an Enum subclass is provided
+        if enum_type is None:
+            raise ValueError("type must be assigned an Enum when using EnumAction")
+        if not issubclass(enum_type, Enum):
+            raise TypeError("type must be an Enum when using EnumAction")
+
+        # Generate choices from the Enum
+        kwargs.setdefault("choices", tuple(e.value for e in enum_type))
+
+        super(EnumAction, self).__init__(**kwargs)
+
+        self._enum = enum_type
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        # Convert value back into an Enum
+        value = self._enum(values)
+        setattr(namespace, self.dest, value)
+
 
 def check_mates(batch, mates, pair_to_index):
     left_partids = batch.graph_idx.flatten()[batch.mc_pairs[0]]
@@ -147,7 +173,7 @@ def main():
     parser.add_argument('--uv_features_only', type=bool, default=True)
     parser.add_argument('--validation_split', type=float, default=0.2)
     parser.add_argument('--dry_run', action='store_true')
-    parser.add_argument('--mode', choices=list(Mode), default=Mode.GENERATE)
+    parser.add_argument('--mode', type=Mode, action=EnumAction, required=True)
     
     #parser.add_argument('--prob_threshold', type=float, default=0.7)
 
@@ -182,7 +208,7 @@ def main():
     LOG('=========RESTARTING=========')
     LOG(str(args))
 
-    if args.mode == Mode.CHECK_BATCHES or args.mode == Mode.ADD_MATE_LABELS or args.mode == Mode.CHECK_BOUNDS or args.mode == Mode.ADD_RIGID_LABELS or args.mode == Mode.ADD_OCC_DATA:
+    if args.mode == Mode.CHECK_BATCHES or args.mode == Mode.ADD_MATE_LABELS or args.mode == Mode.CHECK_BOUNDS or args.mode == Mode.ADD_RIGID_LABELS or args.mode == Mode.ADD_OCC_DATA or args.mode == Mode.ADD_MESH_DATA:
         LOG_results = Logger(resultsfile)
         LOG_results.clear()
 
@@ -193,6 +219,7 @@ def main():
             print('need to specify datalists to check, and name for filtered list')
             exit(1)
         exit(0)
+    
     
     # if clear_previous_run and os.path.isdir(statspath):
     #     print('clearing')
@@ -211,6 +238,11 @@ def main():
     mate_df.set_index('Assembly', inplace=True)
     part_df.set_index('Assembly', inplace=True)
 
+    if args.mode == Mode.ADD_MESH_DATA:
+        meshpath = os.path.join(args.out_path, 'mesh')
+        if not os.path.isdir(meshpath):
+            os.mkdir(meshpath)
+    
     if args.mode == Mode.GENERATE:
         if not os.path.isdir(args.out_path):
             os.mkdir(args.out_path)
@@ -289,7 +321,7 @@ def main():
         fname = f'{ind}.dat'
         torch_datapath = os.path.join(outdatapath, fname)
 
-        if args.mode == Mode.ADD_MATE_LABELS or args.mode == Mode.CHECK_BATCHES or args.mode == Mode.ADD_RIGID_LABELS or args.mode == Mode.ADD_OCC_DATA:
+        if args.mode == Mode.ADD_MATE_LABELS or args.mode == Mode.CHECK_BATCHES or args.mode == Mode.ADD_RIGID_LABELS or args.mode == Mode.ADD_OCC_DATA or args.mode == Mode.ADD_MESH_DATA:
             if os.path.isfile(torch_datapath):
                 
                 batch = torch.load(torch_datapath)
@@ -347,6 +379,18 @@ def main():
                         batch.mate_frames = mate_frames
                         batch.pair_indices = pair_indices
                         torch.save(batch, torch_datapath)
+                elif args.mode == Mode.ADD_MESH_DATA:
+                    mesh_datapath = os.path.join(meshpath, fname)
+                    parts = [Part(os.path.join(datapath, 'data/models', pth)) for pth in batch.paths]
+                    pairs = []
+                    for part, tf in zip(parts, batch.tfs):
+                        V = torch.from_numpy(part.V).float()
+                        F = torch.from_numpy(part.F)
+                        V_tf = (tf[:3,:3] @ V.T).T + tf[:3,3]
+                        pairs.append((V_tf, F))
+                    torch.save(pairs, mesh_datapath)
+
+
                 #TODO: add mode check_batches with additional sanity checks
             else:
                 pass

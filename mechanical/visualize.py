@@ -193,6 +193,8 @@ def plot_assembly(geo, mates, p=None, wireframe=False, show_parts=True, rigid_la
     mate_origins = []
     mate_colors = []
     for i,mate in enumerate(mates):
+        if mate.type == 'FASTENED' and rigid_labels is not None:
+            continue
         if len(mate.matedEntities)==2:
             for mated in mate.matedEntities:
                 tf = geo[mated[0]][0]

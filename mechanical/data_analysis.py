@@ -47,7 +47,7 @@ def find_valid_assemblies(part_df):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='assembly_data_with_transforms_all.h5')
+    parser.add_argument('--name', type=str)
     parser.add_argument('--path', default='/fast/jamesn8/assembly_data/')
     parser.add_argument('--postprocess', choices=['segmentation', 'filtering'])
     parser.add_argument('--progress_interval', type=int, default=100)
@@ -80,7 +80,9 @@ def main():
         mate_rows = []
 
         j = 0
-        for entry in os.scandir(os.path.join(datapath,'data','flattened_assemblies')):
+        for num_processed,entry in enumerate(os.scandir(os.path.join(datapath,'data','flattened_assemblies'))):
+            if num_processed % 1000 == 0:
+                print(f'processed {num_processed}')
             
             if not entry.name.endswith('.json') or entry.name in filter_set:
                 continue
@@ -112,7 +114,7 @@ def main():
                         #neworigin = tf[:3,:3] @ me[1][0] + tf[:3,3]
                         axes.append(me[1][1])
                         origins.append(me[1][0])
-                    mate_rows.append([np.int32(j), mate.matedEntities[0][0], mate.matedEntities[1][0], mate.type, origins[0].astype(np.float32), axes[0].astype(np.float32), origins[1].astype(np.float32), axes[1].astype(np.float32), mate.name])
+                    mate_rows.append([np.int32(j), mate.matedEntities[0][0], mate.matedEntities[1][0], mate.type, origins[0], axes[0], origins[1], axes[1], mate.name])
 
             assembly_rows.append([os.path.splitext(entry.name)[0], np.int32(num_components), np.int32(num_rigid), np.int32(num_lone), np.int32(len(occs)), np.int32(num_part_mates), np.int32(len(mates))])
             assembly_indices.append(np.int32(j)) 
