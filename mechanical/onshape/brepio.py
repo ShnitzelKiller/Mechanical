@@ -37,7 +37,7 @@ class Loader:
     def __init__(self, datapath):
         self.datapath = datapath
     
-    def load_flattened(self, path, geometry=True, skipInvalid=False):
+    def load_flattened(self, path, geometry=True, skipInvalid=False, loadWorkspace=False):
         #_,fname = os.path.split(path)
         #name, ext = os.path.splitext(fname)
         #did, mv, eid = name.split('_')
@@ -71,6 +71,18 @@ class Loader:
         else:
             part_occ_dict = dict([(occ['id'], (np.array(occ['transform']).reshape(4, 4), occ)) for occ in part_occs])
         mates = [Mate(mate, flattened=True) for mate in assembly_def['mates']]
+
+        if loadWorkspace:
+            did = assembly_def['documentId']
+            mv = assembly_def['documentMicroversion']
+            documentFname = os.path.join(self.datapath, f'data/documents/{did}/{mv}.json')
+            if os.path.isfile(documentFname):
+                with open(documentFname) as f:
+                    dj = json.load(f)
+                    workspaceId = dj['data']['defaultWorkspace']['id']
+            else:
+                workspaceId = None
+            return part_occ_dict, mates, workspaceId
 
         return part_occ_dict, mates
 

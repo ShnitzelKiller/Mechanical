@@ -1,1 +1,1 @@
-from .assembly_data import AssemblyInfo, mate_types
+from .assembly_data import *
