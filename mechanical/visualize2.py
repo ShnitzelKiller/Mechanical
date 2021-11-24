@@ -1,5 +1,5 @@
 import numpy as np
-from utils import get_color
+from mechanical.utils import get_color
 import pythreejs as p3s
 import ipywidgets as wg
 
@@ -57,14 +57,19 @@ def add_axis(center, x_dir, y_dir, z_dir, scale=1, mate_type=None):
         add_square(objects, center, x_dir, y_dir, scale, 'blue')
     elif mate_type == 'PARALLEL':
         add_square(objects, center, x_dir, y_dir, scale, 'orange')
+    elif mate_type == 'PIN_SLOT':
+        add_square(objects, center, y_dir, z_dir, scale/2, 'purple')
+        add_square(objects, center+x_dir*scale/2, y_dir, z_dir, scale/2, 'purple')
     return objects
 
 
-def occ_to_mesh(g):
+def occ_to_mesh(g, tf=None):
+    if tf is None:
+        tf = g[0]
     V = g[1].V.copy()
     F = g[1].F
     if V.shape[0] > 0:
-        V = (g[0][:3,:3] @ V.T).T + g[0][:3,3]
+        V = (tf[:3,:3] @ V.T).T + tf[:3,3]
     return V, F
 
 
@@ -79,7 +84,6 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
     minPt = np.full((3,), np.inf)
     maxPt = np.full((3,), -np.inf)
 
-    mesh_data = {}
     for i in geo:
         g = geo[i]
         if g[1] is None:
@@ -89,10 +93,23 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
             continue
         minPt = np.minimum(minPt, V.min(0))
         maxPt = np.maximum(maxPt, V.max(0))
-        mesh_data[i] = (V, F)
     
     meanPt = (minPt + maxPt)/2
     maxDim = (maxPt - minPt).max()
+    scalemat = np.identity(4)
+    scalemat[:3,:3] /= maxDim
+    tfs = {occ: scalemat @ geo[occ][0] for occ in geo}
+    mesh_data = {}
+    for i in geo:
+        g = geo[i]
+        if g[1] is None:
+            continue
+        tf = tfs[i]
+        V, F = occ_to_mesh(g, tf)
+        if V.shape[0] == 0:
+            continue
+        
+        mesh_data[i] = (V, F)
 
     if rigid_labels is not None:
         num_rigid_labels = len(set(rigid_labels))
@@ -126,7 +143,7 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
         part_meshes.append(mesh)
     
         mcf_origins = []
-        tf = g[0]
+        tf = tfs[i]
         for mc in g[1].all_mate_connectors:
             mcf = mc.get_coordinate_system()
             mcf_origins.append(tf[:3,:3] @ mcf[:3,3] + tf[:3,3])
@@ -142,26 +159,34 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
             continue
         if len(mate.matedEntities)==2:
             for mated in mate.matedEntities:
-                tf = geo[mated[0]][0]
+                tf = tfs[mated[0]]
                 newaxes = tf[:3, :3] @ mated[1][1]
                 neworigin = tf[:3,:3] @ mated[1][0] + tf[:3,3]
                 mate_objects = add_axis(neworigin, newaxes[:,0], newaxes[:,1], newaxes[:,2], scale=maxDim/10, mate_type=mate.type)
                 all_mate_objects += mate_objects
 
-    camera = p3s.PerspectiveCamera( position=tuple(np.array([1, 0.6, 1]) * maxDim), lookAt=meanPt, aspect=view_width/view_height)
+    camera = p3s.PerspectiveCamera( position=tuple(np.array([1, 0.6, 1])), lookAt=meanPt/maxDim, aspect=view_width/view_height)
     key_light = p3s.DirectionalLight(position=[0, 10, 10])
     back_light = p3s.DirectionalLight(position=[0, -10, -10], intensity=0.4)
     ambient_light = p3s.AmbientLight()
     scene = p3s.Scene(children=part_meshes + mcf_points + all_mate_objects + [camera, key_light, back_light, ambient_light])
-    controller = p3s.OrbitControls(controlling=camera, target=tuple(meanPt))
+    controller = p3s.OrbitControls(controlling=camera, target=tuple(meanPt/maxDim))
     renderer = p3s.Renderer(camera=camera, scene=scene, controls=[controller],
                         width=view_width, height=view_height)
     chks = [
         wg.Checkbox(False, description='wireframe'),
+        wg.Checkbox(True, description='show parts'),
+        wg.Checkbox(True, description='show MCFs'),
     ]
+    #slider = wg.FloatSlider(description="widget scale", value=1, min=0.1, max=10)
     for mesh in part_meshes:
         wg.jslink((chks[0], 'value'), (mesh.material, 'wireframe'))
+        wg.jslink((chks[1], 'value'), (mesh, 'visible'))
+        #wg.jslink((slider,'value'),(mesh,'scale'))
+    for mcfs in mcf_points:
+        wg.jslink((chks[2], 'value'), (mcfs, 'visible'))
     
+    #for matesymbol in all_mate_objects:
     hbox = wg.HBox(chks)
     vbox = wg.VBox([renderer, hbox])
 
