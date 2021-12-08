@@ -11,7 +11,8 @@ from mechanical.utils import find_neighbors, inter_group_matches, cluster_points
 from scipy.spatial.transform import Rotation as R
 from automate.nn.sbgcn import BrepGraphData
 import torch_scatter
-
+import trimesh.proximity as proximity
+import trimesh
 
 mate_types = [
             'PIN_SLOT',
@@ -23,6 +24,7 @@ mate_types = [
             'PLANAR',
             'FASTENED'
         ]
+
 
 def global_bounding_box(parts, transforms=None):
     if transforms is None:
@@ -421,6 +423,27 @@ class AssemblyInfo:
 
         return all_proposals
 
+    def part_distances(self):
+        """
+        Returns the relative distances between parts (as a fraction of bbox dim)
+        """
+        aabbs = []
+        for part in self.parts:
+            mesh = trimesh.Trimesh(vertices=part.V, faces=part.F)
+            tree = proximity.ProximityQuery(mesh)
+            aabbs.append(tree)
+        
+        pairs = dict()
+        N = len(self.parts)
+        for i in range(N):
+            for j in range(i+1,N):
+                closest, dists, id = aabbs[i].on_surface(self.parts[j].V)
+                minDist = dists.min()
+                closest, dists, id = aabbs[j].on_surface(self.parts[i].V)
+                minDist = min(minDist, dists.min())
+                pairs[(i,j)] = minDist
+        return pairs
+        
 
     def create_batches(self, mates, max_z_groups=10, max_mc_pairs=100000):
         """
@@ -612,8 +635,27 @@ class AssemblyInfo:
         return all(pfuncs_self == pfuncs.numpy())
 
 
-#test that this assembly has all mates matched and found by heuristics
 if __name__ == '__main__':
+    import mechanical.onshape as brepio
+    datapath = '/projects/grail/benjones/cadlab'
+    loader = brepio.Loader(datapath)
+    geo, mates = loader.load_flattened('ca577462ab0f9ba6fb713102_e9b039af8f720b11d74037b5_e8f8d795c4941f6cf63a2a68.json', skipInvalid=True, geometry=False)
+    occ_ids = list(geo.keys())
+    part_paths = []
+    transforms = []
+    for id in occ_ids:
+        path = os.path.join(datapath, 'data/models', *[geo[id][1][k] for k in ['documentId','documentMicroversion','elementId','fullConfiguration']], f'{geo[id][1]["partId"]}.xt')
+        assert(os.path.isfile(path))
+        part_paths.append(path)
+        transforms.append(geo[id][0])
+    #print(part_paths, occ_ids)
+    assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, print, use_uvnet_features=True)
+    print('num valid parts: ', len(assembly_info.parts))
+    pairs = assembly_info.part_distances()
+    print(pairs)
+
+#test that this assembly has all mates matched and found by heuristics
+if __name__ == 'createBatches':
     import mechanical.onshape as brepio
     datapath = '/projects/grail/benjones/cadlab'
     loader = brepio.Loader(datapath)

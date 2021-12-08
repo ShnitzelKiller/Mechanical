@@ -74,7 +74,7 @@ def occ_to_mesh(g, tf=None):
 
 
 def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600):
-    max_part_dim = max([max(geo[i][1].V.max(0)-geo[i][1].V.min(0)) for i in geo if geo[i][1].V.shape[0] > 0])
+    #max_part_dim = max([max(geo[i][1].V.max(0)-geo[i][1].V.min(0)) for i in geo if geo[i][1].V.shape[0] > 0])
     num_parts = len(geo)
     part_index = 0
     geo_colors = dict()
@@ -161,8 +161,9 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
             for mated in mate.matedEntities:
                 tf = tfs[mated[0]]
                 newaxes = tf[:3, :3] @ mated[1][1]
+                newaxes *= maxDim
                 neworigin = tf[:3,:3] @ mated[1][0] + tf[:3,3]
-                mate_objects = add_axis(neworigin, newaxes[:,0], newaxes[:,1], newaxes[:,2], scale=maxDim/10, mate_type=mate.type)
+                mate_objects = add_axis(neworigin, newaxes[:,0], newaxes[:,1], newaxes[:,2], scale=0.1, mate_type=mate.type)
                 all_mate_objects += mate_objects
 
     camera = p3s.PerspectiveCamera( position=tuple(np.array([1, 0.6, 1])), lookAt=meanPt/maxDim, aspect=view_width/view_height)
