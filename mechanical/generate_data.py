@@ -431,26 +431,33 @@ def main():
 
                         stat = assembly_info.stats
                         stat['num_unconnected_close'] = 0
+                        stat['num_unconnected_coincident'] = 0
                         stat['num_unconnected_close_and_coincident'] = 0
                         stat['num_connected_far'] = 0
+                        stat['num_connected_not_coincident'] = 0
                         stat['num_connected_far_or_not_coincident'] = 0
 
-                        for pair in distances:
-                            dist = distances[pair]
+                        allpairs = [pair for pair in distances if distances[pair]] + [pair for pair in proposals]
 
-                            if dist < distance_threshold:
-                                comp1 = part_subset.iloc[pair[0]]['RigidComponentID']
-                                comp2 = part_subset.iloc[pair[1]]['RigidComponentID']
-                                if comp1 != comp2 and pair not in connections:
+                        for pair in allpairs:
+                            comp1 = part_subset.iloc[pair[0]]['RigidComponentID']
+                            comp2 = part_subset.iloc[pair[1]]['RigidComponentID']
+                            if comp1 != comp2 and pair not in connections:
+                                if pair in distances and distances[pair] < distance_threshold:
                                     stat['num_unconnected_close'] += 1
-                                    if pair in proposals:
-                                        stat['num_unconnected_close_and_coincident'] += 1
+                                if pair in proposals:
+                                    stat['num_unconnected_coincident'] += 1
+                                if pair in distances and distances[pair] < distance_threshold and pair in proposals:
+                                    stat['num_unconnected_close_and_coincident'] += 1
+
                         
                         for pair in connections:
                             if pair not in proposals or pair not in distances or distances[pair] >= distance_threshold:
                                 stat['num_connected_far_or_not_coincident'] += 1
                             if pair not in distances or distances[pair] >= distance_threshold:
                                 stat['num_connected_far'] += 1
+                            if pair not in proposals:
+                                stat['num_connected_not_coincident'] += 1
                             
                         
                         if save_stats:
