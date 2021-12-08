@@ -363,7 +363,7 @@ class AssemblyInfo:
         return proposal
 
 
-    def mate_proposals(self, max_z_groups=10):
+    def mate_proposals(self, max_z_groups=10, coincident_only=False):
         """
         Find probable mate locations
         `max_z_groups`: maximum number of clusters of mate connector z directions to consider as possible axes
@@ -388,6 +388,9 @@ class AssemblyInfo:
         mc_quat = [R.from_matrix(rot).as_quat() for rot in flattened_rots]
         matches = inter_group_matches(mc_counts, mc_ray, 6, self.epsilon_rel)
         coincident_proposals = self._matches_to_proposals(matches, 1)
+
+        if coincident_only:
+            return coincident_proposals
 
         all_axial_proposals = []
         all_planar_proposals = []

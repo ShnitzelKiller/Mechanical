@@ -16,6 +16,7 @@ class Mode(Enum):
     ADD_MATE_LABELS = "ADD_MATE_LABELS"
     ADD_RIGID_LABELS = "ADD_RIGID_LABELS"
     GENERATE = "GENERATE"
+    DISTANCE = "DISTANCE"
     ADD_OCC_DATA = "ADD_OCC_DATA"
     ADD_MESH_DATA = "ADD_MESH_DATA"
 
@@ -197,7 +198,12 @@ def main():
     use_uvnet_features = args.use_uvnet_features
     clear_previous_run = args.clear
 
-    statspath = os.path.join(args.out_path, 'stats')
+    if args.mode == Mode.DISTANCE:
+        statspath = os.path.join(args.out_path, 'stats_distance')
+    else:
+        statspath = os.path.join(args.out_path, 'stats')
+
+    
     outdatapath = os.path.join(args.out_path, 'data')
 
     logfile = os.path.join(statspath, 'log.txt')
@@ -249,6 +255,10 @@ def main():
         if not os.path.isdir(statspath):
             os.mkdir(statspath)
             os.mkdir(outdatapath)
+    
+    if args.mode == Mode.DISTANCE:
+        if not os.path.isdir(statspath):
+            os.mkdir(statspath)
     
     
     def record_val(val):
@@ -396,63 +406,121 @@ def main():
                 pass
                 #LOG_results(f'{torch_datapath} missing from directory')
 
-        elif args.mode == Mode.GENERATE:
-            assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
-            num_topologies = assembly_info.num_topologies()
-            LOG(f'initialized AssemblyInfo with {num_topologies} topologies')
-            # LOG(f'topologies per part: {[part.num_topologies for part in assembly_info.parts]}')
-            for j,part in enumerate(assembly_info.parts):
-                if part.num_topologies != len(part.node_types):
-                    LOG(f'part {j} has valid bit {part.valid}, and length of node type vector is {len(part.node_types)}')
-                #assert(part.num_topologies == len(part.node_types))
-            
-            skipped = True
-            has_mc_pairs = False
-            if assembly_info.stats['initialized']:
-                #LOG(f'normalization_matrices:{assembly_info.norm_matrices}')
-                num_invalid_parts = assembly_info.num_invalid_parts()
-                assert(num_invalid_parts == 0)
-                if len(assembly_info.parts) > 1:
-                    skipped = False
-                    mates = df_to_mates(mate_subset)
-                    
-                    LOG(f'creating batch data...')
-                    batch = assembly_info.create_batches(mates, max_z_groups=max_groups, max_mc_pairs=max_mc_pairs)
-                    LOG(str(batch))
-                    if batch.mc_pair_labels.size(0) > 0:
-                        has_mc_pairs = True
-                        assert(batch.part_edges.size(-1) > 0)
-                        torch.save(batch, torch_datapath)
-                    else:
-                        LOG('skipping due to no mc_pairs')
-                    del batch
+        elif args.mode == Mode.GENERATE or args.mode == Mode.DISTANCE:
+            if args.mode == Mode.DISTANCE:
+                if os.path.isfile(torch_datapath):
+                    assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
+                    if len(assembly_info.parts) == part_subset.shape[0]:
 
-            if save_stats:
-                stats = assembly_info.stats
-                mate_stats = assembly_info.mate_stats
+                        # mates_to_match = df_to_mates(mate_subset)
+                        # connections = dict()
+                        # for mate in mates_to_match:
+                        #     mate.type = 'FASTENED' #pretend they're fastened so that the mated pair search is limited to coincident connectors
+                        #     mc_pairs = assembly_info.find_mated_pairs(mate)
 
-                stats['num_mcs'] = assembly_info.num_mate_connectors()
-                stats['skipped'] = skipped
-                stats['has_mc_pairs'] = has_mc_pairs
+                        #     pair = tuple(sorted((assembly_info.occ_to_index[mate.matedEntities[0][0]], assembly_info.occ_to_index[mate.matedEntities[1][0]])))
+                        #     connections[pair] = len(mc_pairs)
+
+                        connections = {tuple(sorted((assembly_info.occ_to_index[mate_subset.iloc[l]['Part1']], assembly_info.occ_to_index[mate_subset.iloc[l]['Part2']]))) for l in range(mate_subset.shape[0])}
+                        proposals = assembly_info.mate_proposals(coincident_only=True)
+
+
+                        distances = assembly_info.part_distances()
+
+                        stat = assembly_info.stats
+                        stat['num_unconnected_close'] = 0
+                        stat['num_unconnected_close_and_coincident'] = 0
+                        stat['num_connected_far'] = 0
+                        stat['num_connected_far_or_not_coincident'] = 0
+
+                        for pair in distances:
+                            dist = distances[pair]
+
+                            if dist < epsilon_rel:
+                                comp1 = part_subset.iloc[pair[0]]['RigidComponentID']
+                                comp2 = part_subset.iloc[pair[1]]['RigidComponentID']
+                                if comp1 != comp2 and pair not in connections:
+                                    stat['num_unconnected_close'] += 1
+                                    if pair in proposals:
+                                        stat['num_unconnected_close_and_coincident'] += 1
+                        
+                        for pair in connections:
+                            if pair not in proposals or distances[pair] >= epsilon_rel:
+                                stat['num_connected_far_or_not_coincident'] += 1
+                            if distances[pair] >= epsilon_rel:
+                                stat['num_connected_far'] += 1
+                            
+                        
+                        if save_stats:
+                            all_stats.append(stat)
+                            processed_indices.append(ind)
+
+                            if (num_processed+start_index+1) % stride == 0:
+                                stat_df_mini = ps.DataFrame(all_stats[last_ckpt:], index=processed_indices[last_ckpt:])
+                                stat_df_mini.to_parquet(os.path.join(statspath, f'stats_{num_processed + start_index}.parquet'))
+                                
+                                last_ckpt = len(processed_indices)
+                                record_val(num_processed + start_index + 1)
+
+
+
+            else:
+                assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
+                num_topologies = assembly_info.num_topologies()
+                LOG(f'initialized AssemblyInfo with {num_topologies} topologies')
+                # LOG(f'topologies per part: {[part.num_topologies for part in assembly_info.parts]}')
+                for j,part in enumerate(assembly_info.parts):
+                    if part.num_topologies != len(part.node_types):
+                        LOG(f'part {j} has valid bit {part.valid}, and length of node type vector is {len(part.node_types)}')
+                    #assert(part.num_topologies == len(part.node_types))
                 
-                all_stats.append(stats)
-                processed_indices.append(ind)
+                skipped = True
+                has_mc_pairs = False
+                if assembly_info.stats['initialized']:
+                    #LOG(f'normalization_matrices:{assembly_info.norm_matrices}')
+                    num_invalid_parts = assembly_info.num_invalid_parts()
+                    assert(num_invalid_parts == 0)
+                    if len(assembly_info.parts) > 1:
+                        skipped = False
+                        mates = df_to_mates(mate_subset)
+                        
+                        LOG(f'creating batch data...')
+                        batch = assembly_info.create_batches(mates, max_z_groups=max_groups, max_mc_pairs=max_mc_pairs)
+                        LOG(str(batch))
+                        if batch.mc_pair_labels.size(0) > 0:
+                            has_mc_pairs = True
+                            assert(batch.part_edges.size(-1) > 0)
+                            torch.save(batch, torch_datapath)
+                        else:
+                            LOG('skipping due to no mc_pairs')
+                        del batch
 
-                if not skipped:
-                    all_mate_stats += mate_stats
-                    mate_indices += list(mate_subset['MateIndex'])
+                if save_stats:
+                    stats = assembly_info.stats
+                    mate_stats = assembly_info.mate_stats
 
-                if (num_processed+start_index+1) % stride == 0:
-                    stat_df_mini = ps.DataFrame(all_stats[last_ckpt:], index=processed_indices[last_ckpt:])
-                    stat_df_mini.fillna(value=replace_keys, inplace=True)
-                    stat_df_mini.to_parquet(os.path.join(statspath, f'stats_{num_processed + start_index}.parquet'))
-                    mate_stat_df_mini = ps.DataFrame(all_mate_stats[last_mate_ckpt:], index=mate_indices[last_mate_ckpt:])
-                    mate_stat_df_mini.to_parquet(os.path.join(statspath, f'mate_stats_{ind}.parquet'))
-                    last_mate_ckpt = len(mate_indices)
-                    last_ckpt = len(processed_indices)
-                    record_val(num_processed + start_index + 1)
+                    stats['num_mcs'] = assembly_info.num_mate_connectors()
+                    stats['skipped'] = skipped
+                    stats['has_mc_pairs'] = has_mc_pairs
+                    
+                    all_stats.append(stats)
+                    processed_indices.append(ind)
 
-            del assembly_info
+                    if not skipped:
+                        all_mate_stats += mate_stats
+                        mate_indices += list(mate_subset['MateIndex'])
+
+                    if (num_processed+start_index+1) % stride == 0:
+                        stat_df_mini = ps.DataFrame(all_stats[last_ckpt:], index=processed_indices[last_ckpt:])
+                        stat_df_mini.fillna(value=replace_keys, inplace=True)
+                        stat_df_mini.to_parquet(os.path.join(statspath, f'stats_{num_processed + start_index}.parquet'))
+                        mate_stat_df_mini = ps.DataFrame(all_mate_stats[last_mate_ckpt:], index=mate_indices[last_mate_ckpt:])
+                        mate_stat_df_mini.to_parquet(os.path.join(statspath, f'mate_stats_{ind}.parquet'))
+                        last_mate_ckpt = len(mate_indices)
+                        last_ckpt = len(processed_indices)
+                        record_val(num_processed + start_index + 1)
+
+                del assembly_info
         
     
     if args.mode == Mode.GENERATE:
@@ -461,6 +529,10 @@ def main():
         stats_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))
         mate_stats_df = ps.DataFrame(all_mate_stats, index=mate_indices)
         mate_stats_df.to_parquet(os.path.join(statspath, 'mate_stats_all.parquet'))
+    
+    if args.mode == Mode.DISTANCE:
+        stats_df = ps.DataFrame(all_stats, index=processed_indices)
+        stats_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))
 
 if __name__ == '__main__':
     main()
