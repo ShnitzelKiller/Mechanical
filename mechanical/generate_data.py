@@ -437,7 +437,7 @@ def main():
                         stat['num_connected_not_coincident'] = 0
                         stat['num_connected_far_or_not_coincident'] = 0
 
-                        allpairs = [pair for pair in distances if distances[pair]] + [pair for pair in proposals]
+                        allpairs = {pair for pair in distances}.union({pair for pair in proposals})
 
                         for pair in allpairs:
                             comp1 = part_subset.iloc[pair[0]]['RigidComponentID']
