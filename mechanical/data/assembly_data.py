@@ -12,6 +12,7 @@ from scipy.spatial.transform import Rotation as R
 from automate.nn.sbgcn import BrepGraphData
 import torch_scatter
 import trimesh.proximity as proximity
+import trimesh.interval as interval
 import trimesh
 
 mate_types = [
@@ -24,6 +25,16 @@ mate_types = [
             'PLANAR',
             'FASTENED'
         ]
+
+
+def bboxes_overlap(bbox1, bbox2, margin=0):
+    overlap = True
+    marginarray = np.array([-margin, margin])
+    for i in range(3):
+        intersects, _ = interval.intersection(bbox1[:,i] + marginarray, bbox2[:,i] + marginarray)
+        overlap = overlap and intersects
+    return overlap
+
 
 
 def global_bounding_box(parts, transforms=None):
@@ -426,12 +437,14 @@ class AssemblyInfo:
 
         return all_proposals
 
-    def part_distances(self):
+    def part_distances(self, threshold):
         """
         Returns the relative distances between parts (as a fraction of bbox dim)
         """
         aabbs = []
+        bboxes = []
         for part in self.parts:
+            bboxes.append(part.bounding_box())
             mesh = trimesh.Trimesh(vertices=part.V, faces=part.F)
             tree = proximity.ProximityQuery(mesh)
             aabbs.append(tree)
@@ -440,11 +453,14 @@ class AssemblyInfo:
         N = len(self.parts)
         for i in range(N):
             for j in range(i+1,N):
-                closest, dists, id = aabbs[i].on_surface(self.parts[j].V)
-                minDist = dists.min()
-                closest, dists, id = aabbs[j].on_surface(self.parts[i].V)
-                minDist = min(minDist, dists.min())
-                pairs[(i,j)] = minDist
+                bbox1 = bboxes[i]
+                bbox2 = bboxes[j]
+                if bboxes_overlap(bbox1, bbox2, threshold):
+                    closest, dists, id = aabbs[i].on_surface(self.parts[j].V)
+                    minDist = dists.min()
+                    closest, dists, id = aabbs[j].on_surface(self.parts[i].V)
+                    minDist = min(minDist, dists.min())
+                    pairs[(i,j)] = minDist
         return pairs
         
 

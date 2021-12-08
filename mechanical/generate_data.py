@@ -159,6 +159,7 @@ def main():
     parser.add_argument('--start_index', type=int, default=0)
     parser.add_argument('--stop_index', type=int, default=-1)
     parser.add_argument('--epsilon_rel', type=float, default=0.001)
+    parser.add_argument('--distance_threshold', type=float, default=0.01)
     parser.add_argument('--max_groups', type=int, default=10)
     parser.add_argument('--max_topologies', type=int, default=5000)
     parser.add_argument('--max_mc_pairs', type=int, default=100000)
@@ -189,6 +190,7 @@ def main():
     start_index = args.start_index
     stop_index = args.stop_index
     epsilon_rel = args.epsilon_rel
+    distance_threshold = args.distance_threshold
     max_groups = args.max_groups
     max_topologies = args.max_topologies
     max_mc_pairs = args.max_mc_pairs
@@ -425,7 +427,7 @@ def main():
                         proposals = assembly_info.mate_proposals(coincident_only=True)
 
 
-                        distances = assembly_info.part_distances()
+                        distances = assembly_info.part_distances(distance_threshold)
 
                         stat = assembly_info.stats
                         stat['num_unconnected_close'] = 0
@@ -436,7 +438,7 @@ def main():
                         for pair in distances:
                             dist = distances[pair]
 
-                            if dist < epsilon_rel:
+                            if dist < distance_threshold:
                                 comp1 = part_subset.iloc[pair[0]]['RigidComponentID']
                                 comp2 = part_subset.iloc[pair[1]]['RigidComponentID']
                                 if comp1 != comp2 and pair not in connections:
@@ -445,9 +447,9 @@ def main():
                                         stat['num_unconnected_close_and_coincident'] += 1
                         
                         for pair in connections:
-                            if pair not in proposals or distances[pair] >= epsilon_rel:
+                            if pair not in proposals or pair not in distances or distances[pair] >= distance_threshold:
                                 stat['num_connected_far_or_not_coincident'] += 1
-                            if distances[pair] >= epsilon_rel:
+                            if pair not in distances or distances[pair] >= distance_threshold:
                                 stat['num_connected_far'] += 1
                             
                         
