@@ -142,22 +142,23 @@ class AssemblyInfo:
 
                 self.transform_parts()
                 
-                self.precompute_geometry()
+                if self.valid:
+                    self.precompute_geometry()
 
-                list_of_lists = [self.parts, self.part_paths, self.part_caches, \
-                        self.occ_transforms, self.occ_to_index, self.occ_ids, self.mc_origins_all, \
-                        self.mc_rots_all, self.mc_rots_homogenized_all, \
-                        self.mco_hashes, self.mcz_hashes, self.mcr_hashes, \
-                        self.mate_transforms, self.part_transforms]
-                try:
-                    assert(all(len(x)==len(self.parts) for x in list_of_lists))
-                except AssertionError as e:
-                    e.args += (self.stats, [len(lst) for lst in list_of_lists])
-                    raise
-                
-        if len(self.occ_ids) > 0:
-            assert([self.occ_to_index[occi] == i for i, occi in enumerate(self.occ_ids)])
-            assert([self.occ_ids[self.occ_to_index[occi]] == occi for occi in self.occ_to_index])
+                    list_of_lists = [self.parts, self.part_paths, self.part_caches, \
+                            self.occ_transforms, self.occ_to_index, self.occ_ids, self.mc_origins_all, \
+                            self.mc_rots_all, self.mc_rots_homogenized_all, \
+                            self.mco_hashes, self.mcz_hashes, self.mcr_hashes, \
+                            self.mate_transforms, self.part_transforms]
+                    try:
+                        assert(all(len(x)==len(self.parts) for x in list_of_lists))
+                    except AssertionError as e:
+                        e.args += (self.stats, [len(lst) for lst in list_of_lists])
+                        raise
+        if self.valid: 
+            if len(self.occ_ids) > 0:
+                assert([self.occ_to_index[occi] == i for i, occi in enumerate(self.occ_ids)])
+                assert([self.occ_ids[self.occ_to_index[occi]] == occi for occi in self.occ_to_index])
         self.stats['initialized'] = self.valid
         
 
@@ -174,12 +175,16 @@ class AssemblyInfo:
         num_invalid = sum([not part.valid for part in transformed_parts])
         self.stats['num_invalid_transformed_parts'] = num_invalid
         if num_invalid > 0:
-            for part, occ in zip(transformed_parts, self.occ_ids):
-                if not part.valid:
-                    self.invalid_occs.add(occ)
-            
-            self.parts, self.part_paths, self.part_caches, norm_matrices, self.occ_transforms, self.occ_ids = zip(*[group for group in zip(transformed_parts, self.part_paths, self.part_caches, norm_matrices, self.occ_transforms, self.occ_ids) if group[0].valid])
-            self.recompute_map()
+            if num_invalid < len(self.parts):
+                for part, occ in zip(transformed_parts, self.occ_ids):
+                    if not part.valid:
+                        self.invalid_occs.add(occ)
+                
+                self.parts, self.part_paths, self.part_caches, norm_matrices, self.occ_transforms, self.occ_ids = zip(*[group for group in zip(transformed_parts, self.part_paths, self.part_caches, norm_matrices, self.occ_transforms, self.occ_ids) if group[0].valid])
+                self.recompute_map()
+            else:
+                self.valid = False
+                return
         else:
             self.parts = transformed_parts
 
@@ -443,24 +448,29 @@ class AssemblyInfo:
         """
         aabbs = []
         bboxes = []
+        self.stats['num_degenerate_bboxes'] = 0
         for part in self.parts:
-            bboxes.append(part.bounding_box())
+            bbox = part.bounding_box()
+            if not part.valid:
+                self.stats['num_degenerate_bboxes'] += 1
+            bboxes.append(bbox)
             mesh = trimesh.Trimesh(vertices=part.V, faces=part.F)
             tree = proximity.ProximityQuery(mesh)
             aabbs.append(tree)
         
         pairs = dict()
-        N = len(self.parts)
-        for i in range(N):
-            for j in range(i+1,N):
-                bbox1 = bboxes[i]
-                bbox2 = bboxes[j]
-                if bboxes_overlap(bbox1, bbox2, threshold):
-                    closest, dists, id = aabbs[i].on_surface(self.parts[j].V)
-                    minDist = dists.min()
-                    closest, dists, id = aabbs[j].on_surface(self.parts[i].V)
-                    minDist = min(minDist, dists.min())
-                    pairs[(i,j)] = minDist
+        if self.stats['num_degenerate_bboxes'] == 0:
+            N = len(self.parts)
+            for i in range(N):
+                for j in range(i+1,N):
+                    bbox1 = bboxes[i]
+                    bbox2 = bboxes[j]
+                    if bboxes_overlap(bbox1, bbox2, threshold):
+                        closest, dists, id = aabbs[i].on_surface(self.parts[j].V)
+                        minDist = dists.min()
+                        closest, dists, id = aabbs[j].on_surface(self.parts[i].V)
+                        minDist = min(minDist, dists.min())
+                        pairs[(i,j)] = minDist
         return pairs
         
 

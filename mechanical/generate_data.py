@@ -164,15 +164,19 @@ def main():
     parser.add_argument('--max_topologies', type=int, default=5000)
     parser.add_argument('--max_mc_pairs', type=int, default=100000)
     parser.add_argument('--stride', type=int, default=500)
-    parser.add_argument('--save_stats', type=bool, default=True)
+    parser.add_argument('--no_stats', dest='save_stats', action='store_false')
+    parser.add_argument('--save_stats', dest='save_stats', action='store_true')
+    parser.set_defaults(save_stats=True)
     parser.add_argument('--clear', action='store_true')
-    parser.add_argument('--use_uvnet_features', type=bool, default=True)
+    parser.add_argument('--no_uvnet_features', dest='use_uvnet_features', action='store_false')
+    parser.add_argument('--use_uvnet_features', dest='use_uvnet_features', action='store_true')
+    parser.set_defaults(use_uvnet_features=True)
     parser.add_argument('--last_checkpoint', action='store_true')
     parser.add_argument('--generate_datalists', type=str, default=None)
     parser.add_argument('--check_datalists', nargs='+', type=str, default=None)
     parser.add_argument('--boundary_check_value', type=float, default=100)
     parser.add_argument('--filter_list', type=str, default=None)
-    parser.add_argument('--uv_features_only', type=bool, default=True)
+    parser.add_argument('--uv_features_only', type=bool, default=True) #this doesn't work
     parser.add_argument('--validation_split', type=float, default=0.2)
     parser.add_argument('--dry_run', action='store_true')
     parser.add_argument('--mode', type=Mode, action=EnumAction, required=True)
@@ -198,6 +202,8 @@ def main():
     #debug_run=False
     save_stats=args.save_stats
     use_uvnet_features = args.use_uvnet_features
+    print('using uvnet features:',use_uvnet_features)
+    print('saving stats:',save_stats)
     clear_previous_run = args.clear
 
     if args.mode == Mode.DISTANCE:
@@ -412,7 +418,7 @@ def main():
             if args.mode == Mode.DISTANCE:
                 if os.path.isfile(torch_datapath):
                     assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
-                    if len(assembly_info.parts) == part_subset.shape[0]:
+                    if assembly_info.valid and len(assembly_info.parts) == part_subset.shape[0]:
 
                         # mates_to_match = df_to_mates(mate_subset)
                         # connections = dict()
@@ -430,39 +436,47 @@ def main():
                         distances = assembly_info.part_distances(distance_threshold)
 
                         stat = assembly_info.stats
-                        stat['num_unconnected_close'] = 0
-                        stat['num_unconnected_coincident'] = 0
-                        stat['num_unconnected_close_and_coincident'] = 0
-                        stat['num_connected_far'] = 0
-                        stat['num_connected_not_coincident'] = 0
-                        stat['num_connected_far_or_not_coincident'] = 0
 
-                        allpairs = {pair for pair in distances}.union({pair for pair in proposals})
+                        if assembly_info.stats['num_degenerate_bboxes'] == 0:
+                            stat['num_unconnected_close'] = 0
+                            stat['num_unconnected_coincident'] = 0
+                            stat['num_unconnected_close_and_coincident'] = 0
+                            stat['num_connected_far'] = 0
+                            stat['num_connected_not_coincident'] = 0
+                            stat['num_connected_far_or_not_coincident'] = 0
+                            allpairs = {pair for pair in distances}.union({pair for pair in proposals})
 
-                        for pair in allpairs:
-                            comp1 = part_subset.iloc[pair[0]]['RigidComponentID']
-                            comp2 = part_subset.iloc[pair[1]]['RigidComponentID']
-                            if comp1 != comp2 and pair not in connections:
-                                if pair in distances and distances[pair] < distance_threshold:
-                                    stat['num_unconnected_close'] += 1
-                                if pair in proposals:
-                                    stat['num_unconnected_coincident'] += 1
-                                if pair in distances and distances[pair] < distance_threshold and pair in proposals:
-                                    stat['num_unconnected_close_and_coincident'] += 1
+                            for pair in allpairs:
+                                comp1 = part_subset.iloc[pair[0]]['RigidComponentID']
+                                comp2 = part_subset.iloc[pair[1]]['RigidComponentID']
+                                if comp1 != comp2 and pair not in connections:
+                                    if pair in distances and distances[pair] < distance_threshold:
+                                        stat['num_unconnected_close'] += 1
+                                    if pair in proposals:
+                                        stat['num_unconnected_coincident'] += 1
+                                    if pair in distances and distances[pair] < distance_threshold and pair in proposals:
+                                        stat['num_unconnected_close_and_coincident'] += 1
 
-                        
-                        for pair in connections:
-                            if pair not in proposals or pair not in distances or distances[pair] >= distance_threshold:
-                                stat['num_connected_far_or_not_coincident'] += 1
-                            if pair not in distances or distances[pair] >= distance_threshold:
-                                stat['num_connected_far'] += 1
-                            if pair not in proposals:
-                                stat['num_connected_not_coincident'] += 1
+                            
+                            for pair in connections:
+                                if pair not in proposals or pair not in distances or distances[pair] >= distance_threshold:
+                                    stat['num_connected_far_or_not_coincident'] += 1
+                                if pair not in distances or distances[pair] >= distance_threshold:
+                                    stat['num_connected_far'] += 1
+                                if pair not in proposals:
+                                    stat['num_connected_not_coincident'] += 1
+                        else:
+                            stat['num_unconnected_close'] = -1
+                            stat['num_unconnected_coincident'] = -1
+                            stat['num_unconnected_close_and_coincident'] = -1
+                            stat['num_connected_far'] = -1
+                            stat['num_connected_not_coincident'] = -1
+                            stat['num_connected_far_or_not_coincident'] = -1
                             
                         
+                        all_stats.append(stat)
+                        processed_indices.append(ind)
                         if save_stats:
-                            all_stats.append(stat)
-                            processed_indices.append(ind)
 
                             if (num_processed+start_index+1) % stride == 0:
                                 stat_df_mini = ps.DataFrame(all_stats[last_ckpt:], index=processed_indices[last_ckpt:])
@@ -531,17 +545,20 @@ def main():
 
                 del assembly_info
         
-    
-    if args.mode == Mode.GENERATE:
-        stats_df = ps.DataFrame(all_stats, index=processed_indices)
-        stats_df.fillna(value=replace_keys, inplace=True)
-        stats_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))
-        mate_stats_df = ps.DataFrame(all_mate_stats, index=mate_indices)
-        mate_stats_df.to_parquet(os.path.join(statspath, 'mate_stats_all.parquet'))
-    
-    if args.mode == Mode.DISTANCE:
-        stats_df = ps.DataFrame(all_stats, index=processed_indices)
-        stats_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))
+    if save_stats:
+        if args.mode == Mode.GENERATE:
+            stats_df = ps.DataFrame(all_stats, index=processed_indices)
+            stats_df.fillna(value=replace_keys, inplace=True)
+            stats_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))
+            mate_stats_df = ps.DataFrame(all_mate_stats, index=mate_indices)
+            mate_stats_df.to_parquet(os.path.join(statspath, 'mate_stats_all.parquet'))
+        
+        if args.mode == Mode.DISTANCE:
+            stats_df = ps.DataFrame(all_stats, index=processed_indices)
+            stats_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))
+    else:
+        print('indices:',processed_indices)
+        print(all_stats)
 
 if __name__ == '__main__':
     main()
