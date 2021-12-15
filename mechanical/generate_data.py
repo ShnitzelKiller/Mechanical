@@ -17,6 +17,7 @@ class Mode(Enum):
     ADD_RIGID_LABELS = "ADD_RIGID_LABELS"
     GENERATE = "GENERATE"
     DISTANCE = "DISTANCE"
+    AUGMENT = "AUGMENT"
     ADD_OCC_DATA = "ADD_OCC_DATA"
     ADD_MESH_DATA = "ADD_MESH_DATA"
 
@@ -208,6 +209,8 @@ def main():
 
     if args.mode == Mode.DISTANCE:
         statspath = os.path.join(args.out_path, 'stats_distance')
+    elif args.mode == Mode.AUGMENT:
+        statspath = os.path.join(args.out_path, 'stats_augment')
     else:
         statspath = os.path.join(args.out_path, 'stats')
 
@@ -264,7 +267,7 @@ def main():
             os.mkdir(statspath)
             os.mkdir(outdatapath)
     
-    if args.mode == Mode.DISTANCE:
+    if args.mode == Mode.DISTANCE or args.mode == Mode.AUGMENT:
         if not os.path.isdir(statspath):
             os.mkdir(statspath)
     
@@ -293,6 +296,7 @@ def main():
     all_mate_stats = []
     processed_indices = []
     mate_indices = []
+    all_newmate_stats = []
 
     run_start_time = time.time()
     if stop_index < 0:
@@ -414,8 +418,27 @@ def main():
                 pass
                 #LOG_results(f'{torch_datapath} missing from directory')
 
-        elif args.mode == Mode.GENERATE or args.mode == Mode.DISTANCE:
-            if args.mode == Mode.DISTANCE:
+        elif args.mode == Mode.GENERATE or args.mode == Mode.DISTANCE or args.mode == Mode.AUGMENT:
+            if args.mode == Mode.AUGMENT:
+                if os.path.isfile(torch_datapath):
+                    assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
+                    if assembly_info.valid and len(assembly_info.parts) == part_subset.shape[0]:
+                        mates = df_to_mates(mate_subset)
+                        stat = assembly_info.fill_missing_mates(mates, list(part_subset['RigidComponentID']), distance_threshold)
+                        for st in stat:
+                            st['Assembly'] = ind
+                        all_newmate_stats += stat
+
+                        if save_stats:
+
+                            if (num_processed+start_index+1) % stride == 0:
+
+                                newmate_stats_df_mini = ps.DataFrame(all_newmate_stats[last_ckpt:])
+                                newmate_stats_df_mini.to_hdf(os.path.join(statspath, f'newmate_stats_{num_processed + start_index}.h5'), 'newmates')
+                                last_ckpt = len(all_newmate_stats)
+                                record_val(num_processed + start_index + 1)
+
+            elif args.mode == Mode.DISTANCE:
                 if os.path.isfile(torch_datapath):
                     assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
                     if assembly_info.valid and len(assembly_info.parts) == part_subset.shape[0]:
@@ -487,7 +510,7 @@ def main():
 
 
 
-            else:
+            elif args.mode == Mode.GENERATE:
                 assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
                 num_topologies = assembly_info.num_topologies()
                 LOG(f'initialized AssemblyInfo with {num_topologies} topologies')
@@ -553,9 +576,13 @@ def main():
             mate_stats_df = ps.DataFrame(all_mate_stats, index=mate_indices)
             mate_stats_df.to_parquet(os.path.join(statspath, 'mate_stats_all.parquet'))
         
-        if args.mode == Mode.DISTANCE:
+        elif args.mode == Mode.DISTANCE:
             stats_df = ps.DataFrame(all_stats, index=processed_indices)
             stats_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))
+
+        elif args.mode == Mode.AUGMENT:
+            newmate_stats_df = ps.DataFrame(all_newmate_stats)
+            newmate_stats_df.to_hdf(os.path.join(statspath, 'newmate_stats_all.h5'), 'newmates')
     else:
         print('indices:',processed_indices)
         print(all_stats)

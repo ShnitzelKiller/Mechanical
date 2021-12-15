@@ -379,9 +379,9 @@ if __name__ == '__main__':
     #embed_minimal_html('export.html', views=[renderer], title='Viewer export')
 
     print('valid:',assembly_info.valid)
-    missing = assembly_info.fill_missing_mates(mates, labeling, assembly_info.epsilon_rel)
+    missing = assembly_info.fill_missing_mates(mates, labeling, 0.01)
     print('missing mates:',len(missing))
-    print(missing)
+    print(assembly_info.newmatestats)
 
 
 if __name__ == '__main__2':

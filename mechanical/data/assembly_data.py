@@ -502,11 +502,13 @@ class AssemblyInfo:
             for neighbor, mateId in adj[curr]:
                 if neighbor not in frontier or dist + 1 < frontier[neighbor][2]:
                     frontier[neighbor] = (curr, mateId, dist + 1)
-        
+        chain_types = []
         if found:
             lastpart = part_ind2
             axis = None
             origin = None
+            slides = False
+            rotates = False
             valid_chain = True
 
             while lastpart != part_ind1:
@@ -515,8 +517,19 @@ class AssemblyInfo:
                 #check that each mate is compatible with the DOFs so far
                 mate = mates[mateId]
                 lastpart = prev
+                chain_types.append(mate.type)
                 
                 if mate.type == MateTypes.FASTENED or mate.type == MateTypes.CYLINDRICAL or mate.type == MateTypes.SLIDER or mate.type == MateTypes.REVOLUTE:
+                    #accumulate DOFs
+                    if mate.type == MateTypes.SLIDER:
+                        slides = True
+                    elif mate.type == MateTypes.CYLINDRICAL:
+                        slides = True
+                        rotates = True
+                    elif mate.type == MateTypes.REVOLUTE:
+                        rotates = True
+                    
+                    #check for consistency of axes
                     if mate.type == MateTypes.REVOLUTE or mate.type == MateTypes.SLIDER or mate.type == MateTypes.CYLINDRICAL:
                         newaxis = homogenize_frame(mate.matedEntities[0][1][1], z_flip_only=True)[:,2]
                         if axis is None:
@@ -573,13 +586,23 @@ class AssemblyInfo:
                         break
 
                 if found_mc_pair:
-                    return mc_pair, origin, axis
+                    if slides:
+                        if rotates:
+                            newtype = MateTypes.CYLINDRICAL
+                        else:
+                            newtype = MateTypes.SLIDER
+                    else:
+                        if rotates:
+                            newtype = MateTypes.REVOLUTE
+                        else:
+                            newtype = MateTypes.FASTENED
+                    return mc_pair, origin, axis, newtype.value, chain_types
                 
 
-        return None
+        return None, None, None, None, chain_types
 
     def fill_missing_mates(self, mates, components, threshold):
-
+        newmatestats = []
         #precompute transformed mate coordinate frames
         mates2 = copy.deepcopy(mates)
         for mate, mate2 in zip(mates, mates2):
@@ -607,10 +630,22 @@ class AssemblyInfo:
             comp2 = components[pair[1]]
             if comp1 != comp2 and pair not in connections:
                 if pair in distances and distances[pair] < threshold and pair in proposals:
-                    newmate = self.find_mate_path(adj, mates2, pair[0], pair[1], proposals[pair], threshold=threshold)
-                    if newmate is not None:
-                        newmates[pair] = newmate
-        return newmates
+                    mc_pair, neworigin, newaxis, newtype, chain_types = self.find_mate_path(adj, mates2, pair[0], pair[1], proposals[pair], threshold=self.epsilon_rel)
+                    counts = {t2.value: sum(1 for t in chain_types if t == t2) for t2 in MateTypes}
+                    stat = {'part1':self.occ_ids[pair[0]],'part2':self.occ_ids[pair[1]],'chain_length':len(chain_types)}
+                    stat = {**stat, **counts}
+                    stat['added_mate'] = False
+                    if mc_pair is not None:
+                        newmates[pair] = (mc_pair, neworigin, newaxis, chain_types)
+                        stat['added_mate'] = True
+                        stat['axis'] = newaxis
+                        stat['origin'] = neworigin
+                        stat['type'] = newtype
+                        stat['mcf_index1'] = mc_pair[0]
+                        stat['mcf_index2'] = mc_pair[1]
+                    newmatestats.append(stat)
+        #self.newmatestats = newmatestats
+        return newmatestats
     
     def get_onshape(self):
         return {self.occ_ids[i]: (np.identity(4), self.parts[i]) for i in range(len(self.parts))}
