@@ -7,13 +7,14 @@ import numpy.linalg as LA
 import torch
 from torch_geometric.data import Batch
 from pspart import Part, NNHash
-from mechanical.utils import find_neighbors, inter_group_matches, cluster_points, homogenize_frame
+from mechanical.utils import find_neighbors, inter_group_matches, cluster_points, homogenize_frame, external_adjacency_list_from_brepdata, find_mate_path
 from scipy.spatial.transform import Rotation as R
 from automate.nn.sbgcn import BrepGraphData
 import torch_scatter
 import trimesh.proximity as proximity
 import trimesh.interval as interval
 import trimesh
+import copy
 
 mate_types = [
             'PIN_SLOT',
@@ -73,6 +74,20 @@ def cs_from_origin_frame(origin, frame):
 def _transform_matches(matches, index_maps):
     return [(index_maps[0][match[0]], index_maps[1][match[1]]) for match in matches]
 
+def assembly_info_from_onshape(occs, datapath):
+    occ_ids = list(occs)
+    part_paths = []
+    transforms = []
+
+    for occ in occs:
+        rel_path = os.path.join(*[occs[occ][1][k] for k in ['documentId','documentMicroversion','elementId','fullConfiguration']], f'{occs[occ][1]["partId"]}.xt')
+        path = os.path.join(datapath, 'data/models', rel_path)
+        assert(os.path.isfile(path))
+        part_paths.append(path)
+        transforms.append(occs[occ][0])
+    
+    return AssemblyInfo(part_paths, transforms, occ_ids)
+
 class AssemblyInfo:
 
     def recompute_map(self):
@@ -81,7 +96,7 @@ class AssemblyInfo:
             self.occ_to_index[occ] = i
               
 
-    def __init__(self, part_paths, transforms, occ_ids, logging_fn, epsilon_rel=0.001, use_uvnet_features=False, max_topologies=10000, skip_hashing=False):
+    def __init__(self, part_paths, transforms, occ_ids, logging_fn=print, epsilon_rel=0.001, use_uvnet_features=False, max_topologies=10000, skip_hashing=False):
         self.epsilon_rel = epsilon_rel
         self.use_uvnet_features = use_uvnet_features
         self.stats = dict()
@@ -472,7 +487,44 @@ class AssemblyInfo:
                         minDist = min(minDist, dists.min())
                         pairs[(i,j)] = minDist
         return pairs
+    
+
+    def fill_missing_mates(self, mates, components, threshold):
+
+        #precompute transformed mate coordinate frames
+        mates2 = copy.deepcopy(mates)
+        for mate, mate2 in zip(mates, mates2):
+            part_indices = [self.occ_to_index[me[0]] for me in mate.matedEntities]
+            newmes = []
+            for partIndex, me in zip(part_indices, mate.matedEntities):
+                origin_local = me[1][0]
+                frame_local = me[1][1]
+                cs = cs_from_origin_frame(origin_local, frame_local)
+                cs_transformed = self.mate_transforms[partIndex] @ cs
+                origin, rot = cs_to_origin_frame(cs_transformed)
+                rot_homogenized = homogenize_frame(rot, z_flip_only=True)
+                newmes.append((me[0], (origin, rot_homogenized)))
+            mate2.matedEntities = newmes
         
+        connections = {tuple(sorted((self.occ_to_index[mate.matedEntities[0][0]], self.occ_to_index[mate.matedEntities[1][0]]))) for mate in mates}
+        distances = self.part_distances(threshold)
+        proposals = self.mate_proposals(coincident_only=True)
+        adj = external_adjacency_list_from_brepdata(self.occ_ids, mates)
+        allpairs = {pair for pair in distances}.union({pair for pair in proposals})
+
+        newmates = dict()
+        for pair in allpairs:
+            comp1 = components[pair[0]]
+            comp2 = components[pair[1]]
+            if comp1 != comp2 and pair not in connections:
+                if pair in distances and distances[pair] < threshold and pair in proposals:
+                    newmate = find_mate_path(self, adj, mates2, pair[0], pair[1], self.mc_origins_all, self.mc_rots_homogenized_all, proposals[pair], threshold=threshold)
+                    if newmate is not None:
+                        newmates[pair] = newmate
+        return newmates
+    
+    def get_onshape(self):
+        return {self.occ_ids[i]: (np.identity(4), self.parts[i]) for i in range(len(self.parts))}
 
     def create_batches(self, mates, max_z_groups=10, max_mc_pairs=100000):
         """

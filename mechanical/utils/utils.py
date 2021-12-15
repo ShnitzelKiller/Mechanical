@@ -265,6 +265,7 @@ def find_mate_path(self, adj, mates, part_ind1, part_ind2, mc_origins_all, mc_ro
     mates: corresponding mate objects
     part_ind1 and part_ind2: the indices in the occurrence list of the two parts to find a path between (in sorted order)
     """
+    
     finalized = dict()
 
     frontier = {part_ind1: (part_ind1, -1, 0)} #partId -> ((prevPart, mate, dist)
@@ -280,7 +281,7 @@ def find_mate_path(self, adj, mates, part_ind1, part_ind2, mc_origins_all, mc_ro
             found=True
             break
         for neighbor, mateId in adj[curr]:
-            if neighbor in frontier and dist + 1 < frontier[neighbor][2]:
+            if neighbor not in frontier or dist + 1 < frontier[neighbor][2]:
                 frontier[neighbor] = (curr, mateId, dist + 1)
     
     if found:
@@ -335,7 +336,7 @@ def find_mate_path(self, adj, mates, part_ind1, part_ind2, mc_origins_all, mc_ro
                 #if an axis is defined, it must match that of the mate connectors
                 #if an origin is defined, it must also lie on the same axis as that of the mate connectors
                 if axis is not None:
-                    mcf_axis = mc_rots_homogenized_all[part_ind1][mc_pair[0]]
+                    mcf_axis = mc_rots_homogenized_all[part_ind1][mc_pair[0]][:,2]
                     if np.allclose(mcf_axis, axis, rtol=0, atol=threshold):
                         if origin is not None:
                             mcf_origin = mc_origins_all[part_ind1][mc_pair[0]]
@@ -355,7 +356,7 @@ def find_mate_path(self, adj, mates, part_ind1, part_ind2, mc_origins_all, mc_ro
             if found_mc_pair:
                 return mc_pair, origin, axis
             
-            
+
     return None
 
     
@@ -462,6 +463,32 @@ def connected_components(adj, connectionType = 'any'):
     return components, labeling
 
 if __name__ == '__main__':
+    import mechanical.onshape as brepio
+    from mechanical.data import AssemblyInfo, assembly_info_from_onshape
+    import os
+    from mechanical.visualize2 import plot_assembly
+    from ipywidgets.embed import embed_minimal_html
+
+    #assemblyPath = '7886c69b1f149069e7a43bdb_b809b448b6da81db4b2388a0_1dc646f33c96254f526ea650.json' #skateboard
+    assemblyPath = '080bda692c7362d9d8f550c0_2bb4d493fe1adaf882bc9c9f_2b9ddd420bbfde38934d34ef.json' #tesla board
+    datapath = '/projects/grail/benjones/cadlab'
+    loader = brepio.Loader(datapath)
+    occs, mates = loader.load_flattened(assemblyPath, geometry=False)
+    adj_list = adjacency_list_from_brepdata(occs, mates)
+    adj = homogenize(adj_list)
+    num_rigid, labeling = connected_components(adj, connectionType='fasten')
+    print('num rigid:',num_rigid)
+
+    assembly_info = assembly_info_from_onshape(occs, datapath)
+    #renderer = plot_assembly(assembly_info.get_onshape(), mates, rigid_labels=labeling)
+    #embed_minimal_html('export.html', views=[renderer], title='Viewer export')
+
+    print('valid:',assembly_info.valid)
+    missing = assembly_info.fill_missing_mates(mates, labeling, assembly_info.epsilon_rel)
+    print('missing mates:',missing)
+
+
+if __name__ == '__main__2':
     points = np.random.randn(10, 2)
     points1 = points[:6, :]
     points2 = points[3:, :]
