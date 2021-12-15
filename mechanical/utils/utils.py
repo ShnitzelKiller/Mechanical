@@ -3,6 +3,7 @@ import numba
 from numba import jit, njit
 from intervaltree import IntervalTree, Interval
 import pspart
+from enum import Enum
 
 
 def get_color(index, total):
@@ -215,6 +216,152 @@ def adjacency_matrix(occs, mates):
             adj[ind2, ind1] = mateType
     
     return adj
+
+class MateTypes(Enum):
+    PIN_SLOT = 'PIN_SLOT'
+    BALL = 'BALL'
+    PARALLEL = 'PARALLEL'
+    SLIDER = 'SLIDER'
+    REVOLUTE = 'REVOLUTE'
+    CYLINDRICAL = 'CYLINDRICAL'
+    PLANAR = 'PLANAR'
+    FASTENED = 'FASTENED'
+    def __eq__(self, obj):
+        return self.value == obj
+
+
+def external_adjacency_list(occs, mates):
+    """
+    Adjacency list given occurrences as a list of ids, and mates as a list of 3-tuples
+    of (id1, id2, type)
+    """
+    adj = [[] for o in occs]
+    index2occ = []
+    for occ in occs:
+        index2occ.append(occ)
+    occ2index = dict()
+    for i in range(len(occs)):
+        occ2index[index2occ[i]] = i
+    
+    for i,mate in enumerate(mates):
+        ind1 = occ2index[mate[0]]
+        ind2 = occ2index[mate[1]]
+        adj[ind1].append((ind2, i))
+        adj[ind2].append((ind1, i))
+    return adj
+
+
+def external_adjacency_list_from_brepdata(occs, mates):
+    """
+    Assumes mates have 2 mated occurrences.
+    """
+    mates = [(mate.matedEntities[0][0], mate.matedEntities[1][0]) for mate in mates]
+    return external_adjacency_list(occs, mates)
+
+MAX_INT = 999999999
+def find_mate_path(self, adj, mates, part_ind1, part_ind2, mc_origins_all, mc_rots_homogenized_all, proposals, threshold=1e-5):
+    """
+    adj: external adjacency list
+    mates: corresponding mate objects
+    part_ind1 and part_ind2: the indices in the occurrence list of the two parts to find a path between (in sorted order)
+    """
+    finalized = dict()
+
+    frontier = {part_ind1: (part_ind1, -1, 0)} #partId -> ((prevPart, mate, dist)
+    found=False
+
+    while len(frontier) > 0:
+        curr, (prev, mateId, dist) = min(frontier.items(), key=lambda x: x[1][2])
+        del frontier[curr]
+        if curr in finalized:
+            continue
+        finalized[curr] = (prev, mateId, dist)
+        if curr == part_ind2:
+            found=True
+            break
+        for neighbor, mateId in adj[curr]:
+            if neighbor in frontier and dist + 1 < frontier[neighbor][2]:
+                frontier[neighbor] = (curr, mateId, dist + 1)
+    
+    if found:
+        lastpart = part_ind2
+        axis = None
+        origin = None
+        valid_chain = True
+
+        while lastpart != part_ind1:
+            prev, mateId, dist = finalized[lastpart]
+
+            #check that each mate is compatible with the DOFs so far
+            mate = mates[mateId]
+            lastpart = prev
+            
+            if mate.type == MateTypes.FASTENED or mate.type == MateTypes.CYLINDRICAL or mate.type == MateTypes.SLIDER or mate.type == MateTypes.REVOLUTE:
+                if mate.type == MateTypes.REVOLUTE or mate.type == MateTypes.SLIDER or mate.type == MateTypes.CYLINDRICAL:
+                    newaxis = homogenize_frame(mate.matedEntities[0][1][1], z_flip_only=True)[:,2]
+                    if axis is None:
+                        axis = newaxis
+                        norm2 = np.dot(axis, axis)
+                    else:
+                        if not np.allclose(newaxis, axis, rtol=0, atol=threshold):
+                            valid_chain = False
+                            break
+                if mate.type == MateTypes.REVOLUTE or mate.type == MateTypes.CYLINDRICAL:
+                    neworigin = mate.matedEntities[0][1][0]
+                    if origin is None:
+                        origin = neworigin
+                    else:
+                        olddist = np.dot(axis, origin)/norm2
+                        newdist = np.dot(axis, neworigin)/norm2
+                        projectedpt = origin - olddist * axis
+                        newprojectedpt = neworigin - newdist * axis
+                        if not np.allclose(projectedpt, newprojectedpt, rtol=0, atol=threshold):
+                            valid_chain = False
+                            break
+
+            else:
+                valid_chain = False
+                break
+
+
+        
+        if valid_chain:
+            found_mc_pair = False
+            if origin is not None and axis is not None:
+                projdist_old = np.dot(axis, origin)/norm2
+                projectedpt_old = origin - projdist_old * axis
+            for mc_pair in proposals:
+                #if no axis is defined (and therefore no origin) just pick the first proposal
+                #if an axis is defined, it must match that of the mate connectors
+                #if an origin is defined, it must also lie on the same axis as that of the mate connectors
+                if axis is not None:
+                    mcf_axis = mc_rots_homogenized_all[part_ind1][mc_pair[0]]
+                    if np.allclose(mcf_axis, axis, rtol=0, atol=threshold):
+                        if origin is not None:
+                            mcf_origin = mc_origins_all[part_ind1][mc_pair[0]]
+
+                            projdist_mcf = np.dot(axis, mcf_origin)/norm2
+                            projectedpt_mcf = mcf_origin - projdist_mcf * axis
+                            if np.allclose(projectedpt_mcf, projectedpt_old, rtol=0, atol=threshold):
+                                found_mc_pair = True
+                                break
+                        else:
+                            found_mc_pair = True
+                            break
+                else:
+                    found_mc_pair = True
+                    break
+
+            if found_mc_pair:
+                return mc_pair, origin, axis
+            
+            
+    return None
+
+    
+            
+
+
 
 def adjacency_list(occs, mates):
     """
