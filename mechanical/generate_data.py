@@ -181,6 +181,7 @@ def main():
     parser.add_argument('--validation_split', type=float, default=0.2)
     parser.add_argument('--dry_run', action='store_true')
     parser.add_argument('--mode', type=Mode, action=EnumAction, required=True)
+    parser.add_argument('--add_distances_to_batches', action='store_true')
     
     #parser.add_argument('--prob_threshold', type=float, default=0.7)
 
@@ -203,6 +204,7 @@ def main():
     #debug_run=False
     save_stats=args.save_stats
     use_uvnet_features = args.use_uvnet_features
+    add_distances_to_batches = args.add_distances_to_batches
     print('using uvnet features:',use_uvnet_features)
     print('saving stats:',save_stats)
     clear_previous_run = args.clear
@@ -452,11 +454,25 @@ def main():
                         #     pair = tuple(sorted((assembly_info.occ_to_index[mate.matedEntities[0][0]], assembly_info.occ_to_index[mate.matedEntities[1][0]])))
                         #     connections[pair] = len(mc_pairs)
 
-                        connections = {tuple(sorted((assembly_info.occ_to_index[mate_subset.iloc[l]['Part1']], assembly_info.occ_to_index[mate_subset.iloc[l]['Part2']]))) for l in range(mate_subset.shape[0])}
+                        connections = {tuple(sorted((assembly_info.occ_to_index[mate_subset.iloc[l]['Part1']], assembly_info.occ_to_index[mate_subset.iloc[l]['Part2']]))): l for l in range(mate_subset.shape[0])}
                         proposals = assembly_info.mate_proposals(coincident_only=True)
 
 
                         distances = assembly_info.part_distances(distance_threshold)
+
+                        if add_distances_to_batches:
+                            batch = torch.load(torch_datapath)
+                            if batch.part_pair_feats.shape[0] < 3:
+                                dists_torch = torch.zeros(batch.part_edges.shape[1], dtype=torch.float32)
+                                for r in range(batch.part_edges.shape[1]):
+                                    pair = tuple(t.item() for t in batch.part_edges[:,r])
+                                    if pair in distances:
+                                        dists_torch[r] = distances[pair]
+                                    else:
+                                        dists_torch[r] = float("Inf")
+                                
+                                batch.part_pair_feats = torch.vstack([batch.part_pair_feats, dists_torch])
+                            #torch.save(batch, torch_datapath)
 
                         stat = assembly_info.stats
 
@@ -482,12 +498,19 @@ def main():
 
                             
                             for pair in connections:
+                                mate_stat = {'connected_far': False, 'connected_not_coincident': False}
                                 if pair not in proposals or pair not in distances or distances[pair] >= distance_threshold:
                                     stat['num_connected_far_or_not_coincident'] += 1
                                 if pair not in distances or distances[pair] >= distance_threshold:
                                     stat['num_connected_far'] += 1
+                                    mate_stat['connected_far'] = True
                                 if pair not in proposals:
                                     stat['num_connected_not_coincident'] += 1
+                                    mate_stat['connected_not_coincident'] = True
+                                mate_stat['type'] = mate_subset.iloc[connections[pair]]['Type']
+                                mate_stat['assembly'] = ind
+                                mate_indices.append(mate_subset.iloc[connections[pair]]['MateIndex'])
+                                all_mate_stats.append(mate_stat)
                         else:
                             stat['num_unconnected_close'] = -1
                             stat['num_unconnected_coincident'] = -1
@@ -504,8 +527,11 @@ def main():
                             if (num_processed+start_index+1) % stride == 0:
                                 stat_df_mini = ps.DataFrame(all_stats[last_ckpt:], index=processed_indices[last_ckpt:])
                                 stat_df_mini.to_parquet(os.path.join(statspath, f'stats_{num_processed + start_index}.parquet'))
+                                mate_stat_df_mini = ps.DataFrame(all_mate_stats[last_mate_ckpt:], index=mate_indices[last_mate_ckpt:])
+                                mate_stat_df_mini.to_parquet(os.path.join(statspath, f'mate_stats_{num_processed + start_index}.parquet'))
                                 
                                 last_ckpt = len(processed_indices)
+                                last_mate_ckpt = len(mate_indices)
                                 record_val(num_processed + start_index + 1)
 
 
@@ -579,6 +605,8 @@ def main():
         elif args.mode == Mode.DISTANCE:
             stats_df = ps.DataFrame(all_stats, index=processed_indices)
             stats_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))
+            mate_stats_df = ps.DataFrame(all_mate_stats, index=mate_indices)
+            mate_stats_df.to_parquet(os.path.join(statspath, 'mate_stats_all.parquet'))
 
         elif args.mode == Mode.AUGMENT:
             newmate_stats_df = ps.DataFrame(all_newmate_stats)
