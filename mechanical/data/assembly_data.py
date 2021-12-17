@@ -559,6 +559,16 @@ class AssemblyInfo:
 
             
             if valid_chain:
+                if slides:
+                    if rotates:
+                        newtype = MateTypes.CYLINDRICAL
+                    else:
+                        newtype = MateTypes.SLIDER
+                else:
+                    if rotates:
+                        newtype = MateTypes.REVOLUTE
+                    else:
+                        newtype = MateTypes.FASTENED
                 found_mc_pair = False
                 if origin is not None and axis is not None:
                     projdist_old = np.dot(axis, origin)/norm2
@@ -586,17 +596,9 @@ class AssemblyInfo:
                         break
 
                 if found_mc_pair:
-                    if slides:
-                        if rotates:
-                            newtype = MateTypes.CYLINDRICAL
-                        else:
-                            newtype = MateTypes.SLIDER
-                    else:
-                        if rotates:
-                            newtype = MateTypes.REVOLUTE
-                        else:
-                            newtype = MateTypes.FASTENED
                     return mc_pair, origin, axis, newtype.value, chain_types
+                else:
+                    return None, None, None, newtype.value, chain_types
                 
 
         return None, None, None, None, chain_types
