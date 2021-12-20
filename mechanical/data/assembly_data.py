@@ -478,7 +478,7 @@ class AssemblyInfo:
                         pairs[(i,j)] = minDist
         return pairs
     
-    def find_mate_path(self, adj, mates, part_ind1, part_ind2, proposals, threshold=1e-5):
+    def find_mate_path(self, adj, mates, part_ind1, part_ind2, proposals=None, threshold=1e-5):
         """
         adj: external adjacency list
         mates: corresponding mate objects
@@ -543,10 +543,10 @@ class AssemblyInfo:
                         neworigin = mate.matedEntities[0][1][0]
                         if origin is None:
                             origin = neworigin
-                        else:
                             olddist = np.dot(axis, origin)/norm2
-                            newdist = np.dot(axis, neworigin)/norm2
                             projectedpt = origin - olddist * axis
+                        else:
+                            newdist = np.dot(axis, neworigin)/norm2
                             newprojectedpt = neworigin - newdist * axis
                             if not np.allclose(projectedpt, newprojectedpt, rtol=0, atol=threshold):
                                 valid_chain = False
@@ -569,39 +569,45 @@ class AssemblyInfo:
                         newtype = MateTypes.REVOLUTE
                     else:
                         newtype = MateTypes.FASTENED
-                found_mc_pair = False
-                if origin is not None and axis is not None:
-                    projdist_old = np.dot(axis, origin)/norm2
-                    projectedpt_old = origin - projdist_old * axis
-                for mc_pair in proposals:
-                    #if no axis is defined (and therefore no origin) just pick the first proposal
-                    #if an axis is defined, it must match that of the mate connectors
-                    #if an origin is defined, it must also lie on the same axis as that of the mate connectors
-                    if axis is not None:
-                        mcf_axis = self.mc_rots_homogenized_all[part_ind1][mc_pair[0]][:,2]
-                        if np.allclose(mcf_axis, axis, rtol=0, atol=threshold):
-                            if origin is not None:
-                                mcf_origin = self.mc_origins_all[part_ind1][mc_pair[0]]
+                
+                if proposals is not None:
+                    found_mc_pair = False
+                    if origin is not None and axis is not None:
+                        projdist_old = np.dot(axis, origin)/norm2
+                        projectedpt_old = origin - projdist_old * axis
+                    for mc_pair in proposals:
+                        #if no axis is defined (and therefore no origin) just pick the first proposal
+                        #if an axis is defined, it must match that of the mate connectors
+                        #if an origin is defined, it must also lie on the same axis as that of the mate connectors
+                        if axis is not None:
+                            mcf_axis = self.mc_rots_homogenized_all[part_ind1][mc_pair[0]][:,2]
+                            if np.allclose(mcf_axis, axis, rtol=0, atol=threshold):
+                                if origin is not None:
+                                    mcf_origin = self.mc_origins_all[part_ind1][mc_pair[0]]
 
-                                projdist_mcf = np.dot(axis, mcf_origin)/norm2
-                                projectedpt_mcf = mcf_origin - projdist_mcf * axis
-                                if np.allclose(projectedpt_mcf, projectedpt_old, rtol=0, atol=threshold):
+                                    projdist_mcf = np.dot(axis, mcf_origin)/norm2
+                                    projectedpt_mcf = mcf_origin - projdist_mcf * axis
+                                    if np.allclose(projectedpt_mcf, projectedpt_old, rtol=0, atol=threshold):
+                                        found_mc_pair = True
+                                        break
+                                else:
                                     found_mc_pair = True
                                     break
-                            else:
-                                found_mc_pair = True
-                                break
+                        else:
+                            found_mc_pair = True
+                            break
+                    
+                    if found_mc_pair:
+                        return mc_pair, origin, axis, newtype.value, chain_types
                     else:
-                        found_mc_pair = True
-                        break
-
-                if found_mc_pair:
-                    return mc_pair, origin, axis, newtype.value, chain_types
+                        return None, None, None, newtype.value, chain_types
                 else:
-                    return None, None, None, newtype.value, chain_types
+                    return origin, axis, newtype.value, chain_types
+            elif proposals is None:
+                return None, None, "", chain_types
                 
 
-        return None, None, None, None, chain_types
+        return None
 
     def fill_missing_mates(self, mates, components, threshold):
         newmatestats = []
@@ -622,30 +628,28 @@ class AssemblyInfo:
         
         connections = {tuple(sorted((self.occ_to_index[mate.matedEntities[0][0]], self.occ_to_index[mate.matedEntities[1][0]]))) for mate in mates}
         distances = self.part_distances(threshold)
-        proposals = self.mate_proposals(coincident_only=True)
         adj = external_adjacency_list_from_brepdata(self.occ_ids, mates)
-        allpairs = {pair for pair in distances}.union({pair for pair in proposals})
 
-        newmates = dict()
-        for pair in allpairs:
+        for pair in distances:
             comp1 = components[pair[0]]
             comp2 = components[pair[1]]
             if comp1 != comp2 and pair not in connections:
-                if pair in distances and distances[pair] < threshold and pair in proposals:
-                    mc_pair, neworigin, newaxis, newtype, chain_types = self.find_mate_path(adj, mates2, pair[0], pair[1], proposals[pair], threshold=self.epsilon_rel)
-                    counts = {t2.value: sum(1 for t in chain_types if t == t2) for t2 in MateTypes}
-                    stat = {'part1':self.occ_ids[pair[0]],'part2':self.occ_ids[pair[1]],'chain_length':len(chain_types)}
-                    stat = {**stat, **counts}
+                if pair in distances and distances[pair] < threshold:
+                    #mc_pair, neworigin, newaxis, newtype, chain_types = self.find_mate_path(adj, mates2, pair[0], pair[1], proposals[pair], threshold=self.epsilon_rel)
+                    pathinfo = self.find_mate_path(adj, mates2, pair[0], pair[1], threshold=self.epsilon_rel)
+                    stat = {'part1':self.occ_ids[pair[0]],'part2':self.occ_ids[pair[1]]}
                     stat['added_mate'] = False
-                    if mc_pair is not None:
-                        newmates[pair] = (mc_pair, neworigin, newaxis, chain_types)
-                        stat['added_mate'] = True
-                        stat['axis'] = newaxis
-                        stat['origin'] = neworigin
-                        stat['type'] = newtype
-                        stat['mcf_index1'] = mc_pair[0]
-                        stat['mcf_index2'] = mc_pair[1]
-                    newmatestats.append(stat)
+                    if pathinfo is not None:
+                        neworigin, newaxis, newtype, chain_types = pathinfo
+                        counts = {t2.value: sum(1 for t in chain_types if t == t2) for t2 in MateTypes}
+                        stat = {**stat, **counts}
+                        stat['chain_length'] = len(chain_types)
+                        if len(newtype) != 0:
+                            stat['added_mate'] = True
+                            stat['axis'] = newaxis
+                            stat['origin'] = neworigin
+                            stat['type'] = newtype
+                            newmatestats.append(stat)
         #self.newmatestats = newmatestats
         return newmatestats
     
