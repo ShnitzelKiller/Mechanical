@@ -1,6 +1,6 @@
 from argparse import ArgumentParser, Action
 import pandas as ps
-from mechanical.data import AssemblyInfo, mate_types, cs_from_origin_frame
+from mechanical.data import AssemblyInfo, assembly_data, mate_types, cs_from_origin_frame
 import os
 import time
 from onshape.brepio import Mate
@@ -10,6 +10,9 @@ import numpy as np
 import random
 from enum import Enum, auto
 from pspart import Part
+import h5py
+from scipy.spatial.transform import Rotation as R
+
 class Mode(Enum):
     CHECK_BATCHES = "CHECK_BATCHES"
     CHECK_BOUNDS = "CHECK_BOUNDS"
@@ -20,6 +23,7 @@ class Mode(Enum):
     AUGMENT = "AUGMENT"
     ADD_OCC_DATA = "ADD_OCC_DATA"
     ADD_MESH_DATA = "ADD_MESH_DATA"
+    ADD_MC_DATA = "ADD_MC_DATA"
 
 class EnumAction(Action):
     """
@@ -213,11 +217,34 @@ def main():
         statspath = os.path.join(args.out_path, 'stats_distance')
     elif args.mode == Mode.AUGMENT:
         statspath = os.path.join(args.out_path, 'stats_augment')
+    elif args.mode == Mode.ADD_MC_DATA:
+        statspath = os.path.join(args.out_path, 'stats_mc')
     else:
         statspath = os.path.join(args.out_path, 'stats')
 
     
     outdatapath = os.path.join(args.out_path, 'data')
+
+    if args.mode == Mode.ADD_MESH_DATA:
+        meshpath = os.path.join(args.out_path, 'mesh')
+        if not os.path.isdir(meshpath):
+            os.mkdir(meshpath)
+    
+    if args.mode == Mode.ADD_MC_DATA:
+        mcpath = os.path.join(args.out_path, 'mc_data')
+        if not os.path.isdir(mcpath):
+            os.mkdir(mcpath) 
+    
+    if args.mode == Mode.GENERATE:
+        if not os.path.isdir(args.out_path):
+            os.mkdir(args.out_path)
+        if not os.path.isdir(statspath):
+            os.mkdir(statspath)
+            os.mkdir(outdatapath)
+    
+    if args.mode == Mode.DISTANCE or args.mode == Mode.AUGMENT or args.mode == Mode.ADD_MC_DATA:
+        if not os.path.isdir(statspath):
+            os.mkdir(statspath)
 
     logfile = os.path.join(statspath, 'log.txt')
     resultsfile = os.path.join(statspath, 'results.txt')
@@ -256,22 +283,6 @@ def main():
     part_df['PartIndex'] = part_df.index
     mate_df.set_index('Assembly', inplace=True)
     part_df.set_index('Assembly', inplace=True)
-
-    if args.mode == Mode.ADD_MESH_DATA:
-        meshpath = os.path.join(args.out_path, 'mesh')
-        if not os.path.isdir(meshpath):
-            os.mkdir(meshpath)
-    
-    if args.mode == Mode.GENERATE:
-        if not os.path.isdir(args.out_path):
-            os.mkdir(args.out_path)
-        if not os.path.isdir(statspath):
-            os.mkdir(statspath)
-            os.mkdir(outdatapath)
-    
-    if args.mode == Mode.DISTANCE or args.mode == Mode.AUGMENT:
-        if not os.path.isdir(statspath):
-            os.mkdir(statspath)
     
     
     def record_val(val):
@@ -420,7 +431,7 @@ def main():
                 pass
                 #LOG_results(f'{torch_datapath} missing from directory')
 
-        elif args.mode == Mode.GENERATE or args.mode == Mode.DISTANCE or args.mode == Mode.AUGMENT:
+        elif args.mode == Mode.GENERATE or args.mode == Mode.DISTANCE or args.mode == Mode.AUGMENT or args.mode == Mode.ADD_MC_DATA:
             if args.mode == Mode.AUGMENT:
                 if os.path.isfile(torch_datapath):
                     assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
@@ -534,7 +545,38 @@ def main():
                                 last_mate_ckpt = len(mate_indices)
                                 record_val(num_processed + start_index + 1)
 
-
+            elif args.mode == Mode.ADD_MC_DATA:
+                assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
+                if assembly_info.valid and len(assembly_info.parts) == part_subset.shape[0]:
+                    axes, pairs_to_dirs, pairs_to_axes, dir_clusters, dir_to_ax_clusters = assembly_info.mate_proposals(max_z_groups=args.max_groups, axes_only=True)
+                    with h5py.File(os.path.join(mcpath, f"{ind}.hdf5"), "w") as f:
+                        mc_frames = f.create_group('mc_frames')
+                        for k in range(len(assembly_info.mc_origins_all)):
+                            partgroup = mc_frames.create_group(str(k))
+                            partgroup.create_dataset('origins', data=np.array(assembly_info.mc_origins_all[k]))
+                            rots_quat = np.array([R.from_matrix(rot).as_quat() for rot in assembly_info.mc_rots_all[k]])
+                            partgroup.create_dataset('rots', data=rots_quat)
+                        dir_groups = f.create_group('dir_clusters')
+                        for c in dir_clusters:
+                            dir = dir_groups.create_group(str(c))
+                            dir.create_dataset('indices', data=np.array(list(dir_clusters[c])))
+                            ax = dir.create_group('axial_clusters')
+                            if c in dir_to_ax_clusters:
+                                for c2 in dir_to_ax_clusters[c]:
+                                    ax.create_dataset(str(c2), data=np.array(list(dir_to_ax_clusters[c][c2])))
+                        pairdata = f.create_group('pair_data') #here, indices mean the UNIQUE representative indices for retrieving each axis from the mc data
+                        for pair in pairs_to_dirs:
+                            key = f'{pair[0]},{pair[1]}'
+                            group = pairdata.create_group(key)
+                            dirgroup = group.create_group('dirs')
+                            dirgroup.create_dataset('values', data = np.array(pairs_to_dirs[pair]))
+                            dirgroup.create_dataset('indices', data = np.array(list(axes[pair])))
+                            ax_group = group.create_group('axes')
+                            for dir_ind, origins in pairs_to_axes[pair]:
+                                ax_cluster = ax_group.create_group(str(dir_ind))
+                                ax_cluster.create_dataset('values', data = np.array(origins))
+                                ax_cluster.create_dataset('indices', data = np.array(axes[pair][dir_ind]))
+                            
 
             elif args.mode == Mode.GENERATE:
                 assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)

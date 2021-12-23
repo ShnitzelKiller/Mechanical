@@ -106,8 +106,37 @@ def cluster_points(nnhash, points):
             nearest = nnhash.get_nearest_points(point)
             visited.add(i)
             visited = visited.union(nearest)
-            clusters[i] = len(nearest)
+            clusters[i] = nearest
     return clusters
+
+
+def inter_group_cluster_points(nnhash, points, group_labels, min_size=2):
+    """
+    Returns a dictionary from pairs of group indices to cluster indices, and a dict from those indices to sets of point indices
+    """
+    assert(len(points) == len(group_labels))
+    visited = set()
+    clusters = dict()
+
+    for i,point in enumerate(points):
+        if i not in visited:
+            nearest = nnhash.get_nearest_points(point)
+            visited.add(i)
+            visited = visited.union(nearest)
+            if len(nearest) >= min_size:
+                clusters[i] = (nearest, {group_labels[n] for n in nearest})
+    
+    groups_to_clusters = dict()
+    for clust_index in clusters:
+        unique_groups = clusters[clust_index][1]
+        for g in unique_groups:
+            for g2 in unique_groups:
+                if g < g2:
+                    key = (g, g2)
+                    if key not in groups_to_clusters:
+                        groups_to_clusters[key] = []
+                    groups_to_clusters[key].append(clust_index)
+    return groups_to_clusters, {i: clusters[i][0] for i in clusters}
 
 class SingleIntervalTree:
     def __init__(self, tree):

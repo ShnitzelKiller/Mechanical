@@ -16,6 +16,8 @@ import trimesh.interval as interval
 import trimesh
 import copy
 
+from mechanical.utils.utils import inter_group_cluster_points
+
 mate_types = [m.value for m in list(MateTypes)]
 
 def bboxes_overlap(bbox1, bbox2, margin=0):
@@ -384,7 +386,7 @@ class AssemblyInfo:
         return proposal
 
 
-    def mate_proposals(self, max_z_groups=10, coincident_only=False):
+    def mate_proposals(self, max_z_groups=10, coincident_only=False, axes_only=False):
         """
         Find probable mate locations
         `max_z_groups`: maximum number of clusters of mate connector z directions to consider as possible axes
@@ -398,6 +400,7 @@ class AssemblyInfo:
 
         """
         mc_counts = [len(mcos) for mcos in self.mc_origins_all]
+        mc_part_labels = [i for i,l in enumerate(self.mc_origins_all) for x in l]
         
         #offset2part = sizes_to_interval_tree(mc_counts)
         #part2offset = [0] + mc_counts[:-1]
@@ -407,9 +410,13 @@ class AssemblyInfo:
         mc_axis = [rot[:,2] for rot in flattened_rots]
         mc_ray = [np.concatenate([origin, axis]) for origin, axis in zip(flattened_origins, mc_axis)]
         mc_quat = [R.from_matrix(rot).as_quat() for rot in flattened_rots]
-        matches = inter_group_matches(mc_counts, mc_ray, 6, self.epsilon_rel)
-        coincident_proposals = self._matches_to_proposals(matches, 1)
 
+        if not axes_only:
+            matches = inter_group_matches(mc_counts, mc_ray, 6, self.epsilon_rel)
+            coincident_proposals = self._matches_to_proposals(matches, 1)
+        else:
+            axes = {} #dictionary from pairs of parts to a dictionary from an axis direction MC to indices of origin MCs that are unique w.r.t. the rays they define with the axis
+            all_clusters = {} #dictionary from direction group indices to all clusters of projected points, as MC indices
         if coincident_only:
             return coincident_proposals
 
@@ -420,7 +427,7 @@ class AssemblyInfo:
         axis_hash = NNHash(mc_axis, 3, self.epsilon_rel)
         clusters = cluster_points(axis_hash, mc_axis)
         group_indices = list(clusters)
-        group_indices.sort(key=lambda k: clusters[k], reverse=True)
+        group_indices.sort(key=lambda k: len(clusters[k]), reverse=True)
         for ind in group_indices[:max_z_groups]:
             # print('processing group',ind,':',result[ind])
             proj_dir = mc_axis[ind]
@@ -430,17 +437,37 @@ class AssemblyInfo:
             # print('projecting to find axes')
             subset_stacked = np.array([flattened_origins[i] for i in same_dir_inds])
             projected_origins = list(subset_stacked @ xy_plane)
-            axial_matches = inter_group_matches(mc_counts, projected_origins, 2, self.epsilon_rel, point_to_grouped_map=index_map)
-            axial_proposals = self._matches_to_proposals(axial_matches, 2)
-            all_axial_proposals.append(axial_proposals)
-            
-            # print('projecting to find planes')
-            projected_z = list(subset_stacked @ proj_dir)
-            z_quat = [np.concatenate([mc_quat[same_dir_ind], [z_dist]]) for same_dir_ind, z_dist in zip(same_dir_inds, projected_z)]
-            planar_matches = inter_group_matches(mc_counts, z_quat, 5, self.epsilon_rel, point_to_grouped_map=index_map)
-            planar_proposals = self._matches_to_proposals(planar_matches, 3)
-            all_planar_proposals.append(planar_proposals)
+            if axes_only:
+                same_dir_labels = [mc_part_labels[k] for k in same_dir_inds]
+                projected_hash = NNHash(projected_origins, 2, self.epsilon_rel)
+                projected_clusters, clusters_to_point_ids = inter_group_cluster_points(projected_hash, projected_origins, same_dir_labels)
+                all_clusters[ind] = {same_dir_inds[c] : [same_dir_inds[k] for k in clusters_to_point_ids[c]] for c in clusters_to_point_ids}
+                for pair in projected_clusters:
+                    if pair not in axes:
+                        axes[pair] = {}
+                    axes[pair][ind] = [same_dir_inds[c] for c in projected_clusters[pair]]
+                    for k in axes[pair][ind]: #remove
+                        assert(k in all_clusters[ind])
+            else:
+                axial_matches = inter_group_matches(mc_counts, projected_origins, 2, self.epsilon_rel, point_to_grouped_map=index_map)
+                axial_proposals = self._matches_to_proposals(axial_matches, 2)
+                all_axial_proposals.append(axial_proposals)
+                
+                # print('projecting to find planes')
+                projected_z = list(subset_stacked @ proj_dir)
+                z_quat = [np.concatenate([mc_quat[same_dir_ind], [z_dist]]) for same_dir_ind, z_dist in zip(same_dir_inds, projected_z)]
+                planar_matches = inter_group_matches(mc_counts, z_quat, 5, self.epsilon_rel, point_to_grouped_map=index_map)
+                planar_proposals = self._matches_to_proposals(planar_matches, 3)
+                all_planar_proposals.append(planar_proposals)
         
+        if axes_only:
+            pairs_to_dirs = {pair : [mc_axis[c] for c in axes[pair]] for pair in axes}
+            pairs_to_axes = {pair : [(c,[flattened_origins[c2] for c2 in axes[pair][c]]) for c in axes[pair]] for pair in axes} #pair -> [(dir_ind, [origins of axes with that dir])]
+            #return:
+            #clusters: index -> list of other indices with the same direction
+            #all_clusters: same index -> (index -> list of other indices on the same axis with that direction)
+            return axes, pairs_to_dirs, pairs_to_axes, clusters, all_clusters 
+
         all_proposals = self._join_proposals(*all_planar_proposals)
         all_proposals = self._join_proposals(all_proposals, *all_axial_proposals)
         all_proposals = self._join_proposals(all_proposals, coincident_proposals)
@@ -481,7 +508,7 @@ class AssemblyInfo:
     def find_mate_path(self, adj, mates, part_ind1, part_ind2, proposals=None, threshold=1e-5):
         """
         adj: external adjacency list
-        mates: corresponding mate objects
+        mates: corresponding mate objects with the coordinate frames transformed to global space (This is not the default, so be careful)
         part_ind1 and part_ind2: the indices in the occurrence list of the two parts to find a path between (in sorted order)
         """
         
@@ -649,8 +676,7 @@ class AssemblyInfo:
                             stat['axis'] = newaxis
                             stat['origin'] = neworigin
                             stat['type'] = newtype
-                            newmatestats.append(stat)
-        #self.newmatestats = newmatestats
+                    newmatestats.append(stat)
         return newmatestats
     
     def get_onshape(self):
