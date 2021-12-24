@@ -45,6 +45,11 @@ def hsv2rgb(h, s, v):
     b = bp + m
     return r, g, b
 
+@njit
+def project_to_plane(point, normal):
+    norm2 = np.dot(normal, normal)
+    projdist = np.dot(normal, point)/norm2
+    return point - projdist * normal
 
 @njit
 def homogenize_sign(vec):

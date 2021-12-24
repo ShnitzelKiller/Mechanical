@@ -1,6 +1,6 @@
 from argparse import ArgumentParser, Action
 import pandas as ps
-from mechanical.data import AssemblyInfo, assembly_data, mate_types, cs_from_origin_frame
+from mechanical.data import AssemblyInfo, assembly_data, mate_types, cs_from_origin_frame, cs_to_origin_frame
 import os
 import time
 from onshape.brepio import Mate
@@ -12,6 +12,7 @@ from enum import Enum, auto
 from pspart import Part
 import h5py
 from scipy.spatial.transform import Rotation as R
+from utils import MateTypes, homogenize_frame, homogenize_sign, project_to_plane
 
 class Mode(Enum):
     CHECK_BATCHES = "CHECK_BATCHES"
@@ -20,10 +21,30 @@ class Mode(Enum):
     ADD_RIGID_LABELS = "ADD_RIGID_LABELS"
     GENERATE = "GENERATE"
     DISTANCE = "DISTANCE"
-    AUGMENT = "AUGMENT"
+    AUGMENT = "AUGMENT" #try to fill in the missing mates between nearby parts if possible (only accounting for simple mate types)
     ADD_OCC_DATA = "ADD_OCC_DATA"
     ADD_MESH_DATA = "ADD_MESH_DATA"
     ADD_MC_DATA = "ADD_MC_DATA"
+    CHECK_MATES = "CHECK_MATES" #check the assemblies with only simple mate types for whether those mates adhere to shared axes inferred from MCs
+
+def load_axes(path):
+    with h5py.File(path, 'r') as f:
+        pair_to_dirs = {}
+        pair_to_axes = {}
+        pair_data = f['pair_data']
+        for key in pair_data.keys():
+            pair = tuple(int(k) for k in key.split(','))
+            dirs = np.array(pair_data[key]['dirs']['values'])
+            dir_index_to_value = {dir_ind : dir for dir_ind, dir in zip(pair_data[key]['dirs']['indices'], dirs)}
+            pair_to_dirs[pair] = dirs
+            pair_to_axes[pair] = []
+            for dir_index in pair_data[key]['axes'].keys():
+                dir = dir_index_to_value[int(dir_index)]
+                for ax_origin in pair_data[key]['axes'][dir_index]['values']:
+                    pair_to_axes[pair].append((dir, ax_origin))
+    return pair_to_dirs, pair_to_axes #pair -> dir, and pair -> (dir, origin)
+
+
 
 class EnumAction(Action):
     """
@@ -227,11 +248,15 @@ def main():
             statsname = 'stats_augment'
     elif args.mode == Mode.ADD_MC_DATA:
         statsname = 'stats_mc'
+    elif args.mode == Mode.CHECK_MATES:
+        statsname = 'stats_check_mates'
     else:
         statsname = 'stats'
     
     statspath = os.path.join(args.out_path, statsname)
-    
+    if not os.path.isdir(statspath):
+        os.mkdir(statspath)
+
     outdatapath = os.path.join(args.out_path, 'data')
 
     if args.mode == Mode.ADD_MESH_DATA:
@@ -247,8 +272,6 @@ def main():
     if args.mode == Mode.GENERATE:
         if not os.path.isdir(args.out_path):
             os.mkdir(args.out_path)
-        if not os.path.isdir(statspath):
-            os.mkdir(statspath)
             os.mkdir(outdatapath)
     
     if args.mode == Mode.DISTANCE or args.mode == Mode.AUGMENT or args.mode == Mode.ADD_MC_DATA:
@@ -440,7 +463,7 @@ def main():
                 pass
                 #LOG_results(f'{torch_datapath} missing from directory')
 
-        elif args.mode == Mode.GENERATE or args.mode == Mode.DISTANCE or args.mode == Mode.AUGMENT or args.mode == Mode.ADD_MC_DATA:
+        elif args.mode == Mode.GENERATE or args.mode == Mode.DISTANCE or args.mode == Mode.AUGMENT or args.mode == Mode.ADD_MC_DATA or args.mode == Mode.CHECK_MATES:
             if args.mode == Mode.AUGMENT:
                 if os.path.isfile(torch_datapath):
                     assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
@@ -448,20 +471,7 @@ def main():
                         mates = df_to_mates(mate_subset)
 
                         if args.matched_axes_only:
-                            with h5py.File(os.path.join(args.out_path, 'mc_data', f'{ind}.hdf5'), 'r') as f:
-                                pair_to_dirs = {}
-                                pair_to_axes = {}
-                                pair_data = f['pair_data']
-                                for key in pair_data.keys():
-                                    pair = tuple(int(k) for k in key.split(','))
-                                    dirs = np.array(pair_data[key]['dirs']['values'])
-                                    dir_index_to_value = {dir_ind : dir for dir_ind, dir in zip(pair_data[key]['dirs']['indices'], dirs)}
-                                    pair_to_dirs[pair] = dirs
-                                    pair_to_axes[pair] = []
-                                    for dir_index in pair_data[key]['axes'].keys():
-                                        dir = dir_index_to_value[int(dir_index)]
-                                        for ax_origin in pair_data[key]['axes'][dir_index]['values']:
-                                            pair_to_axes[pair].append((dir, ax_origin))
+                            pairs_to_dirs, pairs_to_axes = load_axes(os.path.join(args.out_path, 'mc_data', f'{ind}.hdf5'))
                             stat = assembly_info.fill_missing_mates(mates, list(part_subset['RigidComponentID']), distance_threshold, pair_to_dirs=pair_to_dirs, pair_to_axes=pair_to_axes)
                         else: 
                             stat = assembly_info.fill_missing_mates(mates, list(part_subset['RigidComponentID']), distance_threshold)
@@ -603,7 +613,69 @@ def main():
                                 ax_cluster = ax_group.create_group(str(dir_ind))
                                 ax_cluster.create_dataset('values', data = np.array(origins))
                                 ax_cluster.create_dataset('indices', data = np.array(axes[pair][dir_ind]))
+            elif args.mode == Mode.CHECK_MATES:
+                allowed_mates = {MateTypes.FASTENED.value, MateTypes.REVOLUTE.value, MateTypes.CYLINDRICAL.value, MateTypes.SLIDER.value}    
+                if all([k in allowed_mates for k in mate_subset['Type']]):
+                    mates = df_to_mates(mate_subset)
+                    assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
+                    if assembly_info.valid and len(assembly_info.parts) == part_subset.shape[0]:
+                        pairs_to_dirs, pairs_to_axes = load_axes(os.path.join(args.out_path, 'mc_data', f'{ind}.hdf5'))
+                        for j,mate in enumerate(mates):
+                            mate_stat = {'Assembly': ind, 'dir_index': -1, 'axis_index': -1, 'type': mate.type}
+                            part_indices = [assembly_info.occ_to_index[me[0]] for me in mate.matedEntities]
+                            mate_origins = []
+                            mate_dirs = []
+                            for partIndex, me in zip(part_indices, mate.matedEntities):
+                                origin_local = me[1][0]
+                                frame_local = me[1][1]
+                                cs = cs_from_origin_frame(origin_local, frame_local)
+                                cs_transformed = assembly_info.mate_transforms[partIndex] @ cs
+                                origin, rot = cs_to_origin_frame(cs_transformed)
+                                rot_homogenized = homogenize_frame(rot, z_flip_only=True)
+                                mate_origins.append(origin)
+                                mate_dirs.append(rot_homogenized[:,2])
                             
+                            found = False
+
+                            mate_stat['dirs_agree'] = np.allclose(mate_dirs[0], mate_dirs[1], rtol=0, atol=epsilon_rel)
+                            projected_mate_origins = [project_to_plane(origin, mate_dirs[0]) for origin in mate_origins]
+                            mate_stat['axes_agree'] = mate_stat['dirs_agree'] and np.allclose(projected_mate_origins[0], projected_mate_origins[1], rtol=0, atol=epsilon_rel)
+
+                            key = tuple(sorted(part_indices))
+                            if mate.type == MateTypes.FASTENED:
+                                found = True
+                            elif mate.type == MateTypes.SLIDER:
+                                if mate_stat['dirs_agree']:
+                                    if key in pairs_to_dirs:
+                                        for k,dir in enumerate(pairs_to_dirs[key]):
+                                            dir_homo, _ = homogenize_sign(dir)
+                                            if np.allclose(mate_dirs[0], dir_homo, rtol=0, atol=epsilon_rel):
+                                                found = True
+                                                mate_stat['dir_index'] = k
+                                                break
+                            elif mate.type == MateTypes.CYLINDRICAL or mate.type == MateTypes.REVOLUTE:
+                                if mate_stat['axes_agree']:
+                                    if key in pairs_to_axes:
+                                        for k, (dir, origin) in enumerate(pairs_to_axes[key]):
+                                            dir_homo, _ = homogenize_sign(dir)
+                                            if np.allclose(mate_dirs[0], dir_homo, rtol=0, atol=epsilon_rel):
+                                                projected_origin = project_to_plane(origin, mate_dirs[0])
+                                                if np.allclose(projected_mate_origins[0], projected_origin, rtol=0, atol=epsilon_rel):
+                                                    found = True
+                                                    mate_stat['axis_index'] = k
+                                                    break
+                            
+                            mate_stat['valid'] = found
+
+
+                            all_mate_stats.append(mate_stat)
+                            mate_indices.append(mate_subset.iloc[j]['MateIndex'])
+                if save_stats:
+                    if (num_processed+start_index+1) % stride == 0:
+                        mate_stat_df_mini = ps.DataFrame(all_mate_stats[last_mate_ckpt:], index=mate_indices[last_mate_ckpt:])
+                        mate_stat_df_mini.to_parquet(os.path.join(statspath, f'mate_stats_{ind}.parquet'))
+                        last_mate_ckpt = len(mate_indices)
+                        record_val(num_processed + start_index + 1)
 
             elif args.mode == Mode.GENERATE:
                 assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
@@ -680,6 +752,9 @@ def main():
         elif args.mode == Mode.AUGMENT:
             newmate_stats_df = ps.DataFrame(all_newmate_stats)
             newmate_stats_df.to_hdf(os.path.join(statspath, 'newmate_stats_all.h5'), 'newmates')
+        elif args.mode == Mode.CHECK_MATES:
+            mate_stats_df = ps.DataFrame(all_mate_stats, index=mate_indices)
+            mate_stats_df.to_parquet(os.path.join(statspath, 'mate_stats_all.parquet'))
     else:
         print('indices:',processed_indices)
         print(all_stats)
