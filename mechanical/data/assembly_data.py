@@ -16,7 +16,7 @@ import trimesh.interval as interval
 import trimesh
 import copy
 
-from mechanical.utils.utils import inter_group_cluster_points
+from mechanical.utils.utils import homogenize, homogenize_sign, inter_group_cluster_points
 
 mate_types = [m.value for m in list(MateTypes)]
 
@@ -505,7 +505,7 @@ class AssemblyInfo:
                         pairs[(i,j)] = minDist
         return pairs
     
-    def find_mate_path(self, adj, mates, part_ind1, part_ind2, proposals=None, threshold=1e-5):
+    def find_mate_path(self, adj, mates, part_ind1, part_ind2, threshold=1e-5, dir_proposals=None, axes_proposals=None):
         """
         adj: external adjacency list
         mates: corresponding mate objects with the coordinate frames transformed to global space (This is not the default, so be careful)
@@ -583,60 +583,54 @@ class AssemblyInfo:
                     valid_chain = False
                     break
 
-
+            if slides:
+                if rotates:
+                    newtype = MateTypes.CYLINDRICAL
+                else:
+                    newtype = MateTypes.SLIDER
+            else:
+                if rotates:
+                    newtype = MateTypes.REVOLUTE
+                else:
+                    newtype = MateTypes.FASTENED
+            out_dict = {'origin': origin, 'axis': axis, 'type': newtype, 'chain_types': chain_types, 'valid': False, 'axis_index': -1, 'dir_index': -1}
             
             if valid_chain:
-                if slides:
-                    if rotates:
-                        newtype = MateTypes.CYLINDRICAL
-                    else:
-                        newtype = MateTypes.SLIDER
-                else:
-                    if rotates:
-                        newtype = MateTypes.REVOLUTE
-                    else:
-                        newtype = MateTypes.FASTENED
                 
-                if proposals is not None:
+                if dir_proposals is not None and axes_proposals is not None:
                     found_mc_pair = False
                     if origin is not None and axis is not None:
                         projdist_old = np.dot(axis, origin)/norm2
                         projectedpt_old = origin - projdist_old * axis
-                    for mc_pair in proposals:
-                        #if no axis is defined (and therefore no origin) just pick the first proposal
-                        #if an axis is defined, it must match that of the mate connectors
-                        #if an origin is defined, it must also lie on the same axis as that of the mate connectors
-                        if axis is not None:
-                            mcf_axis = self.mc_rots_homogenized_all[part_ind1][mc_pair[0]][:,2]
-                            if np.allclose(mcf_axis, axis, rtol=0, atol=threshold):
-                                if origin is not None:
-                                    mcf_origin = self.mc_origins_all[part_ind1][mc_pair[0]]
-
-                                    projdist_mcf = np.dot(axis, mcf_origin)/norm2
-                                    projectedpt_mcf = mcf_origin - projdist_mcf * axis
-                                    if np.allclose(projectedpt_mcf, projectedpt_old, rtol=0, atol=threshold):
-                                        found_mc_pair = True
-                                        break
-                                else:
-                                    found_mc_pair = True
-                                    break
-                        else:
-                            found_mc_pair = True
-                            break
                     
-                    if found_mc_pair:
-                        return mc_pair, origin, axis, newtype.value, chain_types
-                    else:
-                        return None, None, None, newtype.value, chain_types
-                else:
-                    return origin, axis, newtype.value, chain_types
-            elif proposals is None:
-                return None, None, "", chain_types
-                
+                    if axis is not None and origin is None:
+                        for k,dir in enumerate(dir_proposals):
+                            dir_homo, _ = homogenize_sign(dir)
+                            if np.allclose(dir_homo, axis, rtol=0, atol=threshold):
+                                found_mc_pair = True
+                                out_dict['dir_index'] = k
+                                break
+                    if axis is not None and origin is not None:
+                        for k,ax in enumerate(axes_proposals):
+                            dir_homo, _ = homogenize_sign(ax[0])
+                            if np.allclose(dir_homo, axis, rtol=0, atol=threshold):
+                                mcf_origin = ax[1]
 
+                                projdist_mcf = np.dot(axis, mcf_origin)/norm2
+                                projectedpt_mcf = mcf_origin - projdist_mcf * axis
+                                if np.allclose(projectedpt_mcf, projectedpt_old, rtol=0, atol=threshold):
+                                    found_mc_pair = True
+                                    out_dict['axis_index'] = k
+                                    break
+                    if found_mc_pair:
+                        out_dict['valid'] = True
+
+                else:
+                    out_dict['valid'] = True
+            return out_dict
         return None
 
-    def fill_missing_mates(self, mates, components, threshold):
+    def fill_missing_mates(self, mates, components, threshold, pair_to_dirs=None, pair_to_axes=None):
         newmatestats = []
         #precompute transformed mate coordinate frames
         mates2 = copy.deepcopy(mates)
@@ -663,19 +657,25 @@ class AssemblyInfo:
             if comp1 != comp2 and pair not in connections:
                 if pair in distances and distances[pair] < threshold:
                     #mc_pair, neworigin, newaxis, newtype, chain_types = self.find_mate_path(adj, mates2, pair[0], pair[1], proposals[pair], threshold=self.epsilon_rel)
-                    pathinfo = self.find_mate_path(adj, mates2, pair[0], pair[1], threshold=self.epsilon_rel)
                     stat = {'part1':self.occ_ids[pair[0]],'part2':self.occ_ids[pair[1]]}
+                    if pair_to_dirs is not None and pair_to_axes is not None:
+                        dir_proposals = pair_to_dirs[pair] if pair in pair_to_dirs else []
+                        axes_proposals = pair_to_axes[pair] if pair in pair_to_axes else []
+                        stat['num_dir_proposals'] = len(dir_proposals)
+                        stat['num_axes_proposals'] = len(axes_proposals)
+                        pathinfo = self.find_mate_path(adj, mates2, pair[0], pair[1], threshold=self.epsilon_rel, dir_proposals=dir_proposals, axes_proposals=axes_proposals)
+                    else:
+                        pathinfo = self.find_mate_path(adj, mates2, pair[0], pair[1], threshold=self.epsilon_rel)
                     stat['added_mate'] = False
                     if pathinfo is not None:
-                        neworigin, newaxis, newtype, chain_types = pathinfo
-                        counts = {t2.value: sum(1 for t in chain_types if t == t2) for t2 in MateTypes}
+                        counts = {t2.value: sum(1 for t in pathinfo['chain_types'] if t == t2) for t2 in MateTypes}
                         stat = {**stat, **counts}
-                        stat['chain_length'] = len(chain_types)
-                        if len(newtype) != 0:
+                        stat['chain_length'] = len(pathinfo['chain_types'])
+                        stat['axis'] = pathinfo['axis']
+                        stat['origin'] = pathinfo['origin']
+                        stat['type'] = pathinfo['type']
+                        if pathinfo['valid']:
                             stat['added_mate'] = True
-                            stat['axis'] = newaxis
-                            stat['origin'] = neworigin
-                            stat['type'] = newtype
                     newmatestats.append(stat)
         return newmatestats
     

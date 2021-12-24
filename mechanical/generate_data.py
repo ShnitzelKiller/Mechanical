@@ -164,7 +164,6 @@ def main():
     parser.add_argument('--start_index', type=int, default=0)
     parser.add_argument('--stop_index', type=int, default=-1)
     parser.add_argument('--epsilon_rel', type=float, default=0.001)
-    parser.add_argument('--distance_threshold', type=float, default=0.01)
     parser.add_argument('--max_groups', type=int, default=10)
     parser.add_argument('--max_topologies', type=int, default=5000)
     parser.add_argument('--max_mc_pairs', type=int, default=100000)
@@ -185,8 +184,13 @@ def main():
     parser.add_argument('--validation_split', type=float, default=0.2)
     parser.add_argument('--dry_run', action='store_true')
     parser.add_argument('--mode', type=Mode, action=EnumAction, required=True)
+    #distance mode options
     parser.add_argument('--add_distances_to_batches', action='store_true')
-    
+    #augmentation mode options
+    parser.add_argument('--matched_axes_only', action='store_true')
+    #distance & augmentation mode options
+    parser.add_argument('--distance_threshold', type=float, default=0.01)
+
     #parser.add_argument('--prob_threshold', type=float, default=0.7)
 
     args = parser.parse_args()
@@ -213,15 +217,20 @@ def main():
     print('saving stats:',save_stats)
     clear_previous_run = args.clear
 
+    
     if args.mode == Mode.DISTANCE:
-        statspath = os.path.join(args.out_path, 'stats_distance')
+        statsname = 'stats_distance'
     elif args.mode == Mode.AUGMENT:
-        statspath = os.path.join(args.out_path, 'stats_augment')
+        if args.matched_axes_only:
+            statsname = 'stats_augment_matchedonly'
+        else:
+            statsname = 'stats_augment'
     elif args.mode == Mode.ADD_MC_DATA:
-        statspath = os.path.join(args.out_path, 'stats_mc')
+        statsname = 'stats_mc'
     else:
-        statspath = os.path.join(args.out_path, 'stats')
-
+        statsname = 'stats'
+    
+    statspath = os.path.join(args.out_path, statsname)
     
     outdatapath = os.path.join(args.out_path, 'data')
 
@@ -437,7 +446,25 @@ def main():
                     assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
                     if assembly_info.valid and len(assembly_info.parts) == part_subset.shape[0]:
                         mates = df_to_mates(mate_subset)
-                        stat = assembly_info.fill_missing_mates(mates, list(part_subset['RigidComponentID']), distance_threshold)
+
+                        if args.matched_axes_only:
+                            with h5py.File(os.path.join(args.out_path, 'mc_data', f'{ind}.hdf5'), 'r') as f:
+                                pair_to_dirs = {}
+                                pair_to_axes = {}
+                                pair_data = f['pair_data']
+                                for key in pair_data.keys():
+                                    pair = tuple(int(k) for k in key.split(','))
+                                    dirs = np.array(pair_data[key]['dirs']['values'])
+                                    dir_index_to_value = {dir_ind : dir for dir_ind, dir in zip(pair_data[key]['dirs']['indices'], dirs)}
+                                    pair_to_dirs[pair] = dirs
+                                    pair_to_axes[pair] = []
+                                    for dir_index in pair_data[key]['axes'].keys():
+                                        dir = dir_index_to_value[int(dir_index)]
+                                        for ax_origin in pair_data[key]['axes'][dir_index]['values']:
+                                            pair_to_axes[pair].append((dir, ax_origin))
+                            stat = assembly_info.fill_missing_mates(mates, list(part_subset['RigidComponentID']), distance_threshold, pair_to_dirs=pair_to_dirs, pair_to_axes=pair_to_axes)
+                        else: 
+                            stat = assembly_info.fill_missing_mates(mates, list(part_subset['RigidComponentID']), distance_threshold)
                         for st in stat:
                             st['Assembly'] = ind
                         all_newmate_stats += stat
