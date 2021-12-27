@@ -505,11 +505,13 @@ class AssemblyInfo:
                         pairs[(i,j)] = minDist
         return pairs
     
-    def find_mate_path(self, adj, mates, part_ind1, part_ind2, threshold=1e-5, dir_proposals=None, axes_proposals=None):
+    def find_mate_path(self, adj, mates, part_ind1, part_ind2, threshold=1e-5, dir_proposals=None, axes_proposals=None, require_axis=False):
         """
         adj: external adjacency list
         mates: corresponding mate objects with the coordinate frames transformed to global space (This is not the default, so be careful)
         part_ind1 and part_ind2: the indices in the occurrence list of the two parts to find a path between (in sorted order)
+        dir_proposals and axes_proposals: list of directions, or list of tuples of (direction, origin) of axes/rays that can serve as mate definitions
+        require_axis: Always search for a shared axis between parts; not just shared direction, even for sliders
         """
         
         finalized = dict()
@@ -582,46 +584,56 @@ class AssemblyInfo:
                 else:
                     valid_chain = False
                     break
-
-            if slides:
-                if rotates:
-                    newtype = MateTypes.CYLINDRICAL
-                else:
-                    newtype = MateTypes.SLIDER
-            else:
-                if rotates:
-                    newtype = MateTypes.REVOLUTE
-                else:
-                    newtype = MateTypes.FASTENED
-            out_dict = {'origin': origin, 'axis': axis, 'type': newtype, 'chain_types': chain_types, 'valid': False, 'axis_index': -1, 'dir_index': -1}
+            newtype = ""
+            
+            out_dict = {'origin': origin, 'axis': axis, 'type': "", 'chain_types': chain_types, 'valid': False, 'axis_index': -1, 'dir_index': -1}
             
             if valid_chain:
-                
+                if slides:
+                    if rotates:
+                        newtype = MateTypes.CYLINDRICAL
+                    else:
+                        newtype = MateTypes.SLIDER
+                else:
+                    if rotates:
+                        newtype = MateTypes.REVOLUTE
+                    else:
+                        newtype = MateTypes.FASTENED
+                out_dict['type'] = newtype.value
                 if dir_proposals is not None and axes_proposals is not None:
                     found_mc_pair = False
-                    if origin is not None and axis is not None:
-                        projdist_old = np.dot(axis, origin)/norm2
-                        projectedpt_old = origin - projdist_old * axis
-                    
-                    if axis is not None and origin is None:
-                        for k,dir in enumerate(dir_proposals):
-                            dir_homo, _ = homogenize_sign(dir)
-                            if np.allclose(dir_homo, axis, rtol=0, atol=threshold):
-                                found_mc_pair = True
-                                out_dict['dir_index'] = k
-                                break
-                    if axis is not None and origin is not None:
-                        for k,ax in enumerate(axes_proposals):
-                            dir_homo, _ = homogenize_sign(ax[0])
-                            if np.allclose(dir_homo, axis, rtol=0, atol=threshold):
-                                mcf_origin = ax[1]
+                    if axis is not None:
+                        if origin is not None:
+                            #revolutes & cylindricals
+                            projdist_old = np.dot(axis, origin)/norm2
+                            projectedpt_old = origin - projdist_old * axis
+                            for k,ax in enumerate(axes_proposals):
+                                dir_homo, _ = homogenize_sign(ax[0])
+                                if np.allclose(dir_homo, axis, rtol=0, atol=threshold):
+                                    mcf_origin = ax[1]
 
-                                projdist_mcf = np.dot(axis, mcf_origin)/norm2
-                                projectedpt_mcf = mcf_origin - projdist_mcf * axis
-                                if np.allclose(projectedpt_mcf, projectedpt_old, rtol=0, atol=threshold):
-                                    found_mc_pair = True
-                                    out_dict['axis_index'] = k
-                                    break
+                                    projdist_mcf = np.dot(axis, mcf_origin)/norm2
+                                    projectedpt_mcf = mcf_origin - projdist_mcf * axis
+                                    if np.allclose(projectedpt_mcf, projectedpt_old, rtol=0, atol=threshold):
+                                        found_mc_pair = True
+                                        out_dict['axis_index'] = k
+                                        break
+                        else:
+                            #sliders
+                            if require_axis:
+                                for k,ax in enumerate(axes_proposals):
+                                    dir_homo, _ = homogenize_sign(ax[0])
+                                    if np.allclose(dir_homo, axis, rtol=0, atol=threshold):
+                                        found_mc_pair = True
+                                        out_dict['axis_index'] = k
+                            else:
+                                for k,dir in enumerate(dir_proposals):
+                                    dir_homo, _ = homogenize_sign(dir)
+                                    if np.allclose(dir_homo, axis, rtol=0, atol=threshold):
+                                        found_mc_pair = True
+                                        out_dict['dir_index'] = k
+                                        break
+                    
                     if found_mc_pair:
                         out_dict['valid'] = True
 
@@ -630,7 +642,7 @@ class AssemblyInfo:
             return out_dict
         return None
 
-    def fill_missing_mates(self, mates, components, threshold, pair_to_dirs=None, pair_to_axes=None):
+    def fill_missing_mates(self, mates, components, threshold, pair_to_dirs=None, pair_to_axes=None, require_axis=False):
         newmatestats = []
         #precompute transformed mate coordinate frames
         mates2 = copy.deepcopy(mates)
@@ -663,7 +675,7 @@ class AssemblyInfo:
                         axes_proposals = pair_to_axes[pair] if pair in pair_to_axes else []
                         stat['num_dir_proposals'] = len(dir_proposals)
                         stat['num_axes_proposals'] = len(axes_proposals)
-                        pathinfo = self.find_mate_path(adj, mates2, pair[0], pair[1], threshold=self.epsilon_rel, dir_proposals=dir_proposals, axes_proposals=axes_proposals)
+                        pathinfo = self.find_mate_path(adj, mates2, pair[0], pair[1], threshold=self.epsilon_rel, dir_proposals=dir_proposals, axes_proposals=axes_proposals, require_axis=require_axis)
                     else:
                         pathinfo = self.find_mate_path(adj, mates2, pair[0], pair[1], threshold=self.epsilon_rel)
                     stat['added_mate'] = False
@@ -674,8 +686,9 @@ class AssemblyInfo:
                         stat['axis'] = pathinfo['axis']
                         stat['origin'] = pathinfo['origin']
                         stat['type'] = pathinfo['type']
-                        if pathinfo['valid']:
-                            stat['added_mate'] = True
+                        stat['axis_index'] = pathinfo['axis_index']
+                        stat['dir_index'] = pathinfo['dir_index']
+                        stat['added_mate'] = pathinfo['valid']
                     newmatestats.append(stat)
         return newmatestats
     

@@ -205,10 +205,12 @@ def main():
     parser.add_argument('--validation_split', type=float, default=0.2)
     parser.add_argument('--dry_run', action='store_true')
     parser.add_argument('--mode', type=Mode, action=EnumAction, required=True)
+    parser.add_argument('--name', default='stats')
     #distance mode options
     parser.add_argument('--add_distances_to_batches', action='store_true')
     #augmentation mode options
     parser.add_argument('--matched_axes_only', action='store_true')
+    parser.add_argument('--require_axis', action='store_true')
     #distance & augmentation mode options
     parser.add_argument('--distance_threshold', type=float, default=0.01)
 
@@ -239,20 +241,20 @@ def main():
     clear_previous_run = args.clear
 
     
-    if args.mode == Mode.DISTANCE:
-        statsname = 'stats_distance'
-    elif args.mode == Mode.AUGMENT:
-        if args.matched_axes_only:
-            statsname = 'stats_augment_matchedonly'
-        else:
-            statsname = 'stats_augment'
-    elif args.mode == Mode.ADD_MC_DATA:
-        statsname = 'stats_mc'
-    elif args.mode == Mode.CHECK_MATES:
-        statsname = 'stats_check_mates'
-    else:
-        statsname = 'stats'
-    
+    # if args.mode == Mode.DISTANCE:
+    #     statsname = 'stats_distance'
+    # elif args.mode == Mode.AUGMENT:
+    #     if args.matched_axes_only:
+    #         statsname = 'stats_augment_matchedonly'
+    #     else:
+    #         statsname = 'stats_augment'
+    # elif args.mode == Mode.ADD_MC_DATA:
+    #     statsname = 'stats_mc'
+    # elif args.mode == Mode.CHECK_MATES:
+    #     statsname = 'stats_check_mates'
+    # else:
+    #     statsname = 'stats'
+    statsname = args.name
     statspath = os.path.join(args.out_path, statsname)
     if not os.path.isdir(statspath):
         os.mkdir(statspath)
@@ -471,8 +473,8 @@ def main():
                         mates = df_to_mates(mate_subset)
 
                         if args.matched_axes_only:
-                            pairs_to_dirs, pairs_to_axes = load_axes(os.path.join(args.out_path, 'mc_data', f'{ind}.hdf5'))
-                            stat = assembly_info.fill_missing_mates(mates, list(part_subset['RigidComponentID']), distance_threshold, pair_to_dirs=pair_to_dirs, pair_to_axes=pair_to_axes)
+                            pair_to_dirs, pair_to_axes = load_axes(os.path.join(args.out_path, 'mc_data', f'{ind}.hdf5'))
+                            stat = assembly_info.fill_missing_mates(mates, list(part_subset['RigidComponentID']), distance_threshold, pair_to_dirs=pair_to_dirs, pair_to_axes=pair_to_axes, require_axis=args.require_axis)
                         else: 
                             stat = assembly_info.fill_missing_mates(mates, list(part_subset['RigidComponentID']), distance_threshold)
                         for st in stat:
