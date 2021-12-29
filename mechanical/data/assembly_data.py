@@ -16,7 +16,7 @@ import trimesh.interval as interval
 import trimesh
 import copy
 
-from mechanical.utils.utils import homogenize, homogenize_sign, inter_group_cluster_points
+from mechanical.utils.utils import homogenize, homogenize_sign, inter_group_cluster_points, project_to_plane
 
 mate_types = [m.value for m in list(MateTypes)]
 
@@ -505,7 +505,7 @@ class AssemblyInfo:
                         pairs[(i,j)] = minDist
         return pairs
     
-    def find_mate_path(self, adj, mates, part_ind1, part_ind2, threshold=1e-5, dir_proposals=None, axes_proposals=None, require_axis=False):
+    def find_mate_path(self, mates, part_ind1, part_ind2, threshold=1e-5, dir_proposals=None, axes_proposals=None, require_axis=False, reference_mate=None):
         """
         adj: external adjacency list
         mates: corresponding mate objects with the coordinate frames transformed to global space (This is not the default, so be careful)
@@ -513,7 +513,7 @@ class AssemblyInfo:
         dir_proposals and axes_proposals: list of directions, or list of tuples of (direction, origin) of axes/rays that can serve as mate definitions
         require_axis: Always search for a shared axis between parts; not just shared direction, even for sliders
         """
-        
+        adj = external_adjacency_list_from_brepdata(self.occ_ids, mates)
         finalized = dict()
 
         frontier = {part_ind1: (part_ind1, -1, 0)} #partId -> ((prevPart, mate, dist)
@@ -637,14 +637,36 @@ class AssemblyInfo:
                     if found_mc_pair:
                         out_dict['valid'] = True
 
+                elif reference_mate is not None:
+                    out_dict['true_type'] = reference_mate.type
+                    #check that there are at least the degrees of freedom required by the reference mate
+                    mate_axis = reference_mate.matedEntities[0][1][1][:,2]
+                    mate_origin = reference_mate.matedEntities[0][1][0]
+                    mate_projected_origin = project_to_plane(mate_origin, mate_axis)
+                    if origin is not None:
+                        alt_projected_origin = project_to_plane(origin, mate_axis)
+                    if reference_mate.type == MateTypes.SLIDER:
+                        if slides and axis is not None:
+                            if np.allclose(mate_axis, axis, rtol=0, atol=threshold):
+                                out_dict['valid'] = True
+                    elif reference_mate.type == MateTypes.CYLINDRICAL:
+                        if slides and rotates and axis is not None and origin is not None:
+                            if np.allclose(mate_axis, axis, rtol=0, atol=threshold) and np.allclose(mate_projected_origin, alt_projected_origin, rtol=0, atol=threshold):
+                                out_dict['valid'] = True
+                    elif reference_mate.type == MateTypes.REVOLUTE:
+                        if rotates and axis is not None and origin is not None:
+                            if np.allclose(mate_axis, axis, rtol=0, atol=threshold) and np.allclose(mate_projected_origin, alt_projected_origin, rtol=0, atol=threshold):
+                                out_dict['valid'] = True
+                    elif reference_mate.type == MateTypes.FASTENED:
+                        out_dict['valid'] = True
+                                
+                                
                 else:
                     out_dict['valid'] = True
             return out_dict
         return None
 
-    def fill_missing_mates(self, mates, components, threshold, pair_to_dirs=None, pair_to_axes=None, require_axis=False):
-        newmatestats = []
-        #precompute transformed mate coordinate frames
+    def transform_mates(self, mates):
         mates2 = copy.deepcopy(mates)
         for mate, mate2 in zip(mates, mates2):
             part_indices = [self.occ_to_index[me[0]] for me in mate.matedEntities]
@@ -658,26 +680,63 @@ class AssemblyInfo:
                 rot_homogenized = homogenize_frame(rot, z_flip_only=True)
                 newmes.append((me[0], (origin, rot_homogenized)))
             mate2.matedEntities = newmes
+        return mates2
+
+    def validate_mates(self, mates):
+        """
+        Validate mates based on assembly context (whether an alternate path of mates (if any) agrees with the given one).
+        Only valid for assemblies with only fastens, revolutes, sliders, and cylindrical mates.
+        """
+        matestats = []
+        mates2 = self.transform_mates(mates)
+        for j,mate in enumerate(mates2):
+            mates_holdout = [m for k,m in enumerate(mates2) if k != j]
+            pair = tuple(sorted((self.occ_to_index[mate.matedEntities[0][0]], self.occ_to_index[mate.matedEntities[1][0]])))
+            #dir_proposals = pair_to_dirs[pair] if pair in pair_to_dirs else []
+            #axes_proposals = pair_to_axes[pair] if pair in pair_to_axes else []
+            pathinfo = self.find_mate_path(mates_holdout, pair[0], pair[1], threshold=self.epsilon_rel, reference_mate=mate)
+            stat = dict()
+            stat['has_alt_path'] = (pathinfo is not None)
+            if pathinfo is not None:
+                counts = {t2.value: sum(1 for t in pathinfo['chain_types'] if t == t2) for t2 in MateTypes}
+                stat = {**stat, **counts}
+                stat['feasible'] = pathinfo['valid']
+                stat['chain_length'] = len(pathinfo['chain_types'])
+                stat['alternate_axis'] = pathinfo['axis']
+                stat['alternate_origin'] = pathinfo['origin']
+                stat['alternate_type'] = pathinfo['type']
+            else:
+                stat['chain_length'] = -1
+                stat['alternate_axis'] = None
+                stat['alternate_origin'] = None
+                stat['alternate_type'] = ""
+                stat['feasible'] = True
+            matestats.append(stat)
+        return matestats
+
+    def fill_missing_mates(self, mates, components, threshold, pair_to_dirs=None, pair_to_axes=None, require_axis=False):
+        newmatestats = []
+        #precompute transformed mate coordinate frames
+        mates2 = self.transform_mates(mates)
         
         connections = {tuple(sorted((self.occ_to_index[mate.matedEntities[0][0]], self.occ_to_index[mate.matedEntities[1][0]]))) for mate in mates}
         distances = self.part_distances(threshold)
-        adj = external_adjacency_list_from_brepdata(self.occ_ids, mates)
 
         for pair in distances:
             comp1 = components[pair[0]]
             comp2 = components[pair[1]]
             if comp1 != comp2 and pair not in connections:
                 if pair in distances and distances[pair] < threshold:
-                    #mc_pair, neworigin, newaxis, newtype, chain_types = self.find_mate_path(adj, mates2, pair[0], pair[1], proposals[pair], threshold=self.epsilon_rel)
+                    #mc_pair, neworigin, newaxis, newtype, chain_types = self.find_mate_path(mates2, pair[0], pair[1], proposals[pair], threshold=self.epsilon_rel)
                     stat = {'part1':self.occ_ids[pair[0]],'part2':self.occ_ids[pair[1]]}
                     if pair_to_dirs is not None and pair_to_axes is not None:
                         dir_proposals = pair_to_dirs[pair] if pair in pair_to_dirs else []
                         axes_proposals = pair_to_axes[pair] if pair in pair_to_axes else []
                         stat['num_dir_proposals'] = len(dir_proposals)
                         stat['num_axes_proposals'] = len(axes_proposals)
-                        pathinfo = self.find_mate_path(adj, mates2, pair[0], pair[1], threshold=self.epsilon_rel, dir_proposals=dir_proposals, axes_proposals=axes_proposals, require_axis=require_axis)
+                        pathinfo = self.find_mate_path(mates2, pair[0], pair[1], threshold=self.epsilon_rel, dir_proposals=dir_proposals, axes_proposals=axes_proposals, require_axis=require_axis)
                     else:
-                        pathinfo = self.find_mate_path(adj, mates2, pair[0], pair[1], threshold=self.epsilon_rel)
+                        pathinfo = self.find_mate_path(mates2, pair[0], pair[1], threshold=self.epsilon_rel)
                     stat['added_mate'] = False
                     if pathinfo is not None:
                         counts = {t2.value: sum(1 for t in pathinfo['chain_types'] if t == t2) for t2 in MateTypes}

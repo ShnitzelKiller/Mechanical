@@ -2,6 +2,7 @@ import json
 from pspart import Part, MateConnector
 import os
 import numpy as np
+from utils import project_to_plane
 
 def frame_from_mated_cs(mated_cs):
     origin = np.array(mated_cs['origin'])
@@ -30,8 +31,15 @@ class Mate:
                 self.matedEntities = [(me['matedOccurrence'][-1], frame_from_mated_cs(me['matedCS'])) for me in mate_json['matedEntities']]
             self.type = mate_json['mateType']
             self.name = mate_json['name']
+    
+    def get_axes(self):
+        return [me[1][1][:,2] for me in self.matedEntities]
 
+    def get_origins(self):
+        return [me[1][0] for me in self.matedEntities]
 
+    def get_projected_origins(self, dir):
+        return [project_to_plane(origin, dir) for origin in self.get_origins()]
 
 class Loader:
     def __init__(self, datapath):

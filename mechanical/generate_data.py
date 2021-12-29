@@ -96,6 +96,38 @@ def df_to_mates(mate_subset):
         mates.append(mate)
     return mates
 
+def mate_self_consistent(mate, tol):
+    if mate.type == MateTypes.FASTENED:
+        return True
+    elif mate.type == MateTypes.SLIDER:
+        dirs = mate.get_axes()
+        return np.allclose(dirs[0], dirs[1], rtol=0, atol=tol)
+    else:
+        dirs = mate.get_axes()
+        if np.allclose(dirs[0], dirs[1], rtol=0, atol=tol):
+            projpoints = mate.get_projected_origins(dirs[0])
+            return np.allclose(projpoints[0], projpoints[1], rtol=0, atol=tol)
+        else:
+            return False
+
+def mates_equivalent(mate1, mate2, tol):
+    if mate1.type != mate2.type:
+        return False
+    else:
+        if mate1.type == MateTypes.FASTENED:
+            return True
+        elif mate1.type == MateTypes.SLIDER:
+            return np.allclose(mate1.get_axes()[0], mate2.get_axes()[0], rtol=0, atol=tol)
+        else:
+            axis1 = mate1.get_axes()[0]
+            axis2 = mate2.get_axes()[0]
+            if np.allclose(axis1, axis2, rtol=0, atol=tol):
+                projpoint1 = mate1.get_projected_origins(axis1)[0]
+                projpoint2 = mate2.get_projected_origins(axis2)[0]
+                return np.allclose(projpoint1, projpoint2, rtol=0, atol=tol)
+            else:
+                return False
+
 class Logger:
     def __init__(self, filepath):
         self.filepath = filepath
@@ -208,13 +240,20 @@ def main():
     parser.add_argument('--name', default='stats')
     #distance mode options
     parser.add_argument('--add_distances_to_batches', action='store_true')
+    
     #augmentation mode options
     parser.add_argument('--matched_axes_only', action='store_true')
     parser.add_argument('--require_axis', action='store_true')
     #distance & augmentation mode options
     parser.add_argument('--distance_threshold', type=float, default=0.01)
-
+    #mate check options
+    parser.add_argument('--check_alternate_paths', action='store_true')
+    parser.add_argument('--validate_feasibility', action='store_true')
     #parser.add_argument('--prob_threshold', type=float, default=0.7)
+
+    #adding mate labels options
+    parser.add_argument('--pair_data', action='store_true')
+    parser.add_argument('--augmented_labels', action='store_true')
 
     args = parser.parse_args()
     #PROB_THRESHOLD = args.prob_threshold
@@ -236,6 +275,8 @@ def main():
     save_stats=args.save_stats
     use_uvnet_features = args.use_uvnet_features
     add_distances_to_batches = args.add_distances_to_batches
+    PAIR_DATA = args.pair_data
+    AUGMENTED_LABELS = args.augmented_labels
     print('using uvnet features:',use_uvnet_features)
     print('saving stats:',save_stats)
     clear_previous_run = args.clear
@@ -318,7 +359,10 @@ def main():
     mate_df.set_index('Assembly', inplace=True)
     part_df.set_index('Assembly', inplace=True)
     
-    
+    if args.mode == Mode.ADD_MATE_LABELS:
+        mate_check_df = ps.read_parquet('/fast/jamesn8/assembly_data/assembly_torch2_fixsize/stats_check_mates/mate_stats_all.parquet')
+        newmate_stats_df = ps.read_hdf('/fast/jamesn8/assembly_data/assembly_torch2_fixsize/stats_augment_matchedonly/newmate_stats_all.h5','newmates')
+        newmate_stats_df.set_index('Assembly', inplace=True)
     def record_val(val):
         with open(resumefile, 'w') as f:
             f.write(str(val) + '\n')
@@ -387,6 +431,15 @@ def main():
             #else:
             #    transforms.append(part_subset.iloc[j]['Transform'])
         
+        occ_to_index = dict()
+        for i,occ in enumerate(occ_ids):
+            occ_to_index[occ] = i
+        pair_to_index = dict()
+        mates = df_to_mates(mate_subset)
+        for m,mate in enumerate(mates):
+            part_indices = [occ_to_index[me[0]] for me in mate.matedEntities]
+            pair_to_index[tuple(sorted(part_indices))] = m
+        
         fname = f'{ind}.dat'
         torch_datapath = os.path.join(outdatapath, fname)
 
@@ -401,27 +454,71 @@ def main():
                     print('skipping',ind)
                     continue
 
-                occ_to_index = dict()
-                for i,occ in enumerate(occ_ids):
-                    occ_to_index[occ] = i
-                pair_to_index = dict()
-                mates = df_to_mates(mate_subset)
-                for m,mate in enumerate(mates):
-                    part_indices = [occ_to_index[me[0]] for me in mate.matedEntities]
-                    pair_to_index[tuple(sorted(part_indices))] = m
-
                 if args.mode == Mode.ADD_MATE_LABELS:
-                    pair_types = torch.full((batch.part_edges.shape[1],), -1, dtype=torch.int64)
-                    for k in range(batch.part_edges.shape[1]):
-                        key = tuple(t.item() for t in batch.part_edges[:,k])
-                        assert(key[0] < key[1])
-                        if key in pair_to_index:
-                            pair_types[k] = mate_types.index(mates[pair_to_index[key]].type)
-                    
-                    assert(check_mates(batch, mates, pair_to_index))
-                    if not DRY_RUN:
-                        batch.pair_types = pair_types
-                        torch.save(batch, torch_datapath)
+                    if PAIR_DATA:
+                        h5fname = os.path.join(args.out_path, 'mc_data', f'{ind}.hdf5')
+                        if os.path.isfile(h5fname):
+                            rigid_comps = list(part_subset['RigidComponentID'])
+                            if AUGMENTED_LABELS:
+                                augmented_pairs_to_index = dict()
+                                newmate_subset = newmate_stats_df.loc[ind]
+                                if ind in newmate_subset.index:
+                                    if newmate_subset.ndim == 1:
+                                        newmate_subset = ps.DataFrame([newmate_subset], columns=newmate_subset.keys())
+                                    for m in range(newmate_subset.shape[0]):
+                                        part_indices = tuple(sorted([occ_to_index[newmate_subset.iloc[m][k]] for k in ['part1','part2']]))
+                                        augmented_pairs_to_index[part_indices] = m
+                        
+                            with h5py.File(h5fname,'r+') as f:
+                                pair_data = f['pair_data']
+                                for key in pair_data.keys():
+                                    pair = tuple(sorted([int(k) for k in key.split(',')]))
+                                    mateType = -1
+                                    augmentedType = -1
+                                    mateDirInd = -1
+                                    mateAxisInd = -1
+                                    augmentedDirInd = -1
+                                    augmentedAxisInd = -1
+                                    if pair in pair_to_index:
+                                        mate_index = pair_to_index[pair]
+                                        mateType = mate_types.index(mates[mate_index].type)
+                                        mate_check_row = mate_check_df.loc[mate_subset.iloc[mate_index]['MateIndex']]
+                                        mateDirInd = mate_check_row['dir_index']
+                                        mateAxisInd = mate_check_row['axis_index']
+
+                                    if AUGMENTED_LABELS:
+                                        if pair in augmented_pairs_to_index:
+                                            augmented_index = augmented_pairs_to_index[pair]
+                                            if newmate_subset.iloc[augmented_index]['added_mate']:
+                                                augmentedType = mate_types.index(newmate_subset.iloc[augmented_index]['type'])
+                                                augmentedDirInd = newmate_subset.iloc[augmented_index]['dir_index']
+                                                augmentedAxisInd = newmate_subset.iloc[augmented_index]['axis_index']
+                                    
+                                    #density fasten mates
+                                    if rigid_comps[pair[0]] == rigid_comps[pair[1]]:
+                                        augmentedType = mate_types.index('FASTENED')
+                                
+                                    pair_data[key].attrs['type'] = mateType
+                                    pair_data[key].attrs['dirIndex'] = mateDirInd
+                                    pair_data[key].attrs['axisIndex'] = mateAxisInd
+                                    if AUGMENTED_LABELS:
+                                        pair_data[key].attrs['augmented_type'] = augmentedType
+                                        pair_data[key].attrs['augmented_dirIndex'] = augmentedDirInd
+                                        pair_data[key].attrs['augmented_axisIndex'] = augmentedAxisInd
+                        else:
+                            LOG(f'missing {h5fname}')
+                    else:
+                        pair_types = torch.full((batch.part_edges.shape[1],), -1, dtype=torch.int64)
+                        for k in range(batch.part_edges.shape[1]):
+                            key = tuple(t.item() for t in batch.part_edges[:,k])
+                            assert(key[0] < key[1])
+                            if key in pair_to_index:
+                                pair_types[k] = mate_types.index(mates[pair_to_index[key]].type)
+                        
+                        assert(check_mates(batch, mates, pair_to_index))
+                        if not DRY_RUN:
+                            batch.pair_types = pair_types
+                            torch.save(batch, torch_datapath)
 
                 elif args.mode == Mode.ADD_RIGID_LABELS:
                     if not hasattr(batch, 'rigid_labels') and not DRY_RUN:
@@ -523,6 +620,16 @@ def main():
                                 
                                 batch.part_pair_feats = torch.vstack([batch.part_pair_feats, dists_torch])
                             #torch.save(batch, torch_datapath)
+                        
+                        if PAIR_DATA:
+                            with h5py.File(os.path.join(args.out_path, 'mc_data', f'{ind}.hdf5'),'r+') as f:
+                                pair_data = f['pair_data']
+                                for key in pair_data.keys():
+                                    pair = tuple(sorted([int(k) for k in key.split(',')]))
+                                    if pair in distances:
+                                        pair_data[key].attrs['distance'] = distances[pair]
+                                    else:
+                                        pair_data[key].attrs['distance'] = np.inf
 
                         stat = assembly_info.stats
 
@@ -619,8 +726,10 @@ def main():
                 allowed_mates = {MateTypes.FASTENED.value, MateTypes.REVOLUTE.value, MateTypes.CYLINDRICAL.value, MateTypes.SLIDER.value}    
                 if all([k in allowed_mates for k in mate_subset['Type']]):
                     mates = df_to_mates(mate_subset)
+                    rigid_comps = list(part_subset['RigidComponentID'])
                     assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
                     if assembly_info.valid and len(assembly_info.parts) == part_subset.shape[0]:
+                        curr_mate_stats = []
                         pairs_to_dirs, pairs_to_axes = load_axes(os.path.join(args.out_path, 'mc_data', f'{ind}.hdf5'))
                         for j,mate in enumerate(mates):
                             mate_stat = {'Assembly': ind, 'dir_index': -1, 'axis_index': -1, 'type': mate.type}
@@ -642,40 +751,90 @@ def main():
                             mate_stat['dirs_agree'] = np.allclose(mate_dirs[0], mate_dirs[1], rtol=0, atol=epsilon_rel)
                             projected_mate_origins = [project_to_plane(origin, mate_dirs[0]) for origin in mate_origins]
                             mate_stat['axes_agree'] = mate_stat['dirs_agree'] and np.allclose(projected_mate_origins[0], projected_mate_origins[1], rtol=0, atol=epsilon_rel)
-
                             key = tuple(sorted(part_indices))
+
+                            if mate_stat['dirs_agree']:
+                                if key in pairs_to_dirs:
+                                    for k,dir in enumerate(pairs_to_dirs[key]):
+                                        dir_homo, _ = homogenize_sign(dir)
+                                        if np.allclose(mate_dirs[0], dir_homo, rtol=0, atol=epsilon_rel):
+                                            mate_stat['dir_index'] = k
+                                            break
+                            
+                            if mate_stat['axes_agree']:
+                                if key in pairs_to_axes:
+                                    for k, (dir, origin) in enumerate(pairs_to_axes[key]):
+                                        dir_homo, _ = homogenize_sign(dir)
+                                        if np.allclose(mate_dirs[0], dir_homo, rtol=0, atol=epsilon_rel):
+                                            projected_origin = project_to_plane(origin, mate_dirs[0])
+                                            if np.allclose(projected_mate_origins[0], projected_origin, rtol=0, atol=epsilon_rel):
+                                                mate_stat['axis_index'] = k
+                                                break
+
                             if mate.type == MateTypes.FASTENED:
                                 found = True
                             elif mate.type == MateTypes.SLIDER:
-                                if mate_stat['dirs_agree']:
-                                    if key in pairs_to_dirs:
-                                        for k,dir in enumerate(pairs_to_dirs[key]):
-                                            dir_homo, _ = homogenize_sign(dir)
-                                            if np.allclose(mate_dirs[0], dir_homo, rtol=0, atol=epsilon_rel):
-                                                found = True
-                                                mate_stat['dir_index'] = k
-                                                break
+                                found = mate_stat['dir_index'] != -1
+                                
                             elif mate.type == MateTypes.CYLINDRICAL or mate.type == MateTypes.REVOLUTE:
-                                if mate_stat['axes_agree']:
-                                    if key in pairs_to_axes:
-                                        for k, (dir, origin) in enumerate(pairs_to_axes[key]):
-                                            dir_homo, _ = homogenize_sign(dir)
-                                            if np.allclose(mate_dirs[0], dir_homo, rtol=0, atol=epsilon_rel):
-                                                projected_origin = project_to_plane(origin, mate_dirs[0])
-                                                if np.allclose(projected_mate_origins[0], projected_origin, rtol=0, atol=epsilon_rel):
-                                                    found = True
-                                                    mate_stat['axis_index'] = k
-                                                    break
+                                found = mate_stat['axis_index'] != -1
                             
-                            mate_stat['valid'] = found
+                            if args.validate_feasibility:
+                                mate_stat['rigid_comp_attempting_motion'] = rigid_comps[part_indices[0]] == rigid_comps[part_indices[1]] and mate.type != MateTypes.FASTENED
+                                mate_stat['valid'] = found and not mate_stat['rigid_comp_attempting_motion']
+                            else:
+                                mate_stat['valid'] = found
 
-
-                            all_mate_stats.append(mate_stat)
+                            curr_mate_stats.append(mate_stat)
                             mate_indices.append(mate_subset.iloc[j]['MateIndex'])
+                        
+                        if args.check_alternate_paths:
+                            validation_stats = assembly_info.validate_mates(mates)
+                            assert(len(validation_stats) == len(curr_mate_stats))
+                            final_stats = [{**stat, **vstat} for stat, vstat in zip(curr_mate_stats, validation_stats)]
+                            curr_mate_stats = final_stats
+                        
+                        if args.validate_feasibility:
+                            num_incompatible_mates = 0
+                            num_moving_mates_between_same_rigid = 0
+                            num_multimates_between_rigid = 0
+                            rigid_pairs_to_mate = dict()
+                            for pair in pair_to_index:
+                                rigid_pair = tuple(sorted([rigid_comps[k] for k in pair]))
+                                if rigid_pair[0] != rigid_pair[1]:
+                                    if rigid_pair not in rigid_pairs_to_mate:
+                                        rigid_pairs_to_mate[rigid_pair] = pair_to_index[pair]
+                                    else:
+                                        num_multimates_between_rigid += 1
+                                        prevMate = mates[rigid_pairs_to_mate[rigid_pair]]
+                                        currMate = mates[pair_to_index[pair]]
+                                        prevMate = assembly_info.transform_mates([prevMate])[0]
+                                        currMate = assembly_info.transform_mates([currMate])[0]
+                                        if not mates_equivalent(prevMate, currMate, epsilon_rel):
+                                            num_incompatible_mates += 1
+                                else:
+                                    if mates[pair_to_index[pair]].type != MateTypes.FASTENED:
+                                        num_moving_mates_between_same_rigid += 1
+                            feasible = (num_moving_mates_between_same_rigid == 0) and (num_incompatible_mates == 0) and all([mate_stat['valid'] for mate_stat in curr_mate_stats])
+                            stat = {'num_moving_mates_between_same_rigid':num_moving_mates_between_same_rigid,
+                                    'num_incompatible_mates_between_rigid':num_incompatible_mates,
+                                    'num_multimates_between_rigid':num_multimates_between_rigid,
+                                    'feasible': feasible}
+                            all_stats.append(stat)
+                            processed_indices.append(ind)
+
+                                
+                                
+
+                        all_mate_stats += curr_mate_stats
                 if save_stats:
                     if (num_processed+start_index+1) % stride == 0:
+                        if args.validate_feasibility:
+                            stat_df_mini = ps.DataFrame(all_stats[last_ckpt:], index=processed_indices[last_ckpt:])
+                            stat_df_mini.to_parquet(os.path.join(statspath, f'stats_{num_processed+start_index}.parquet'))
+                            last_ckpt = len(processed_indices)
                         mate_stat_df_mini = ps.DataFrame(all_mate_stats[last_mate_ckpt:], index=mate_indices[last_mate_ckpt:])
-                        mate_stat_df_mini.to_parquet(os.path.join(statspath, f'mate_stats_{ind}.parquet'))
+                        mate_stat_df_mini.to_hdf(os.path.join(statspath, f'mate_stats_{ind}.h5'), 'mates')
                         last_mate_ckpt = len(mate_indices)
                         record_val(num_processed + start_index + 1)
 
@@ -755,8 +914,11 @@ def main():
             newmate_stats_df = ps.DataFrame(all_newmate_stats)
             newmate_stats_df.to_hdf(os.path.join(statspath, 'newmate_stats_all.h5'), 'newmates')
         elif args.mode == Mode.CHECK_MATES:
+            if args.validate_feasibility:
+                stat_df = ps.DataFrame(all_stats, index=processed_indices)
+                stat_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))
             mate_stats_df = ps.DataFrame(all_mate_stats, index=mate_indices)
-            mate_stats_df.to_parquet(os.path.join(statspath, 'mate_stats_all.parquet'))
+            mate_stats_df.to_hdf(os.path.join(statspath, 'mate_stats_all.h5'), 'mates')
     else:
         print('indices:',processed_indices)
         print(all_stats)
