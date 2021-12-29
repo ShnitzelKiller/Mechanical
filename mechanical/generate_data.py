@@ -25,6 +25,7 @@ class Mode(Enum):
     ADD_OCC_DATA = "ADD_OCC_DATA"
     ADD_MESH_DATA = "ADD_MESH_DATA"
     ADD_MC_DATA = "ADD_MC_DATA"
+    ADD_MC_DEFINITIONS = "ADD_MC_DEFINITIONS"
     CHECK_MATES = "CHECK_MATES" #check the assemblies with only simple mate types for whether those mates adhere to shared axes inferred from MCs
 
 def load_axes(path):
@@ -307,8 +308,8 @@ def main():
         if not os.path.isdir(meshpath):
             os.mkdir(meshpath)
     
+    mcpath = os.path.join(args.out_path, 'mc_data')
     if args.mode == Mode.ADD_MC_DATA:
-        mcpath = os.path.join(args.out_path, 'mc_data')
         if not os.path.isdir(mcpath):
             os.mkdir(mcpath) 
     
@@ -562,7 +563,7 @@ def main():
                 pass
                 #LOG_results(f'{torch_datapath} missing from directory')
 
-        elif args.mode == Mode.GENERATE or args.mode == Mode.DISTANCE or args.mode == Mode.AUGMENT or args.mode == Mode.ADD_MC_DATA or args.mode == Mode.CHECK_MATES:
+        elif args.mode == Mode.GENERATE or args.mode == Mode.DISTANCE or args.mode == Mode.AUGMENT or args.mode == Mode.ADD_MC_DATA or args.mode == Mode.CHECK_MATES or args.mode == Mode.ADD_MC_DEFINITIONS:
             if args.mode == Mode.AUGMENT:
                 if os.path.isfile(torch_datapath):
                     assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
@@ -690,6 +691,27 @@ def main():
                                 last_ckpt = len(processed_indices)
                                 last_mate_ckpt = len(mate_indices)
                                 record_val(num_processed + start_index + 1)
+            
+            elif args.mode == Mode.ADD_MC_DEFINITIONS:
+                assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
+                if assembly_info.valid and len(assembly_info.parts) == part_subset.shape[0]:
+                    h5file = os.path.join(mcpath, f"{ind}.hdf5")
+                    if os.path.isfile(h5file):
+                        with h5py.File(os.path.join(mcpath, f"{ind}.hdf5"), "r+") as f:
+                            mc_group = f.create_group('mc_definitions')
+                            for p,part in enumerate(assembly_info.parts):
+                                mcs = part.all_mate_connectors
+                                assert(f['mc_frames'][str(p)]['origins'].shape[0] == len(mcs))
+                                assert(f['mc_frames'][str(p)]['rots'].shape[0] == len(mcs))
+                                mc_dataset = np.empty((len(mcs), 3), dtype=np.int32)
+                                for r in range(len(mcs)):
+                                    mc_dataset[r,0] = mcs[r].orientation_inference.topology_ref
+                                    mc_dataset[r,1] = mcs[r].location_inference.topology_ref
+                                    mc_dataset[r,2] = mcs[r].location_inference.inference_type.value
+                                mc_group.create_dataset(str(p), data=mc_dataset)
+
+                            
+                                
 
             elif args.mode == Mode.ADD_MC_DATA:
                 assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
