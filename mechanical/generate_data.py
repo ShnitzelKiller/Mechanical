@@ -361,7 +361,8 @@ def main():
     part_df.set_index('Assembly', inplace=True)
     
     if args.mode == Mode.ADD_MATE_LABELS:
-        mate_check_df = ps.read_parquet('/fast/jamesn8/assembly_data/assembly_torch2_fixsize/stats_check_mates/mate_stats_all.parquet')
+        #mate_check_df = ps.read_parquet('/fast/jamesn8/assembly_data/assembly_torch2_fixsize/stats_check_mates/mate_stats_all.parquet')
+        mate_check_df = ps.read_hdf('/fast/jamesn8/assembly_data/assembly_torch2_fixsize/stats_check_mates_all_proposals_validate_rigidcomps_more_axis_stats/mate_stats_all.h5','mates')
         newmate_stats_df = ps.read_hdf('/fast/jamesn8/assembly_data/assembly_torch2_fixsize/stats_augment_matchedonly/newmate_stats_all.h5','newmates')
         newmate_stats_df.set_index('Assembly', inplace=True)
     def record_val(val):
@@ -495,17 +496,16 @@ def main():
                                                 augmentedDirInd = newmate_subset.iloc[augmented_index]['dir_index']
                                                 augmentedAxisInd = newmate_subset.iloc[augmented_index]['axis_index']
                                     
-                                    #density fasten mates
+                                    #densify fasten mates
                                     if rigid_comps[pair[0]] == rigid_comps[pair[1]]:
                                         augmentedType = mate_types.index('FASTENED')
                                 
                                     pair_data[key].attrs['type'] = mateType
                                     pair_data[key].attrs['dirIndex'] = mateDirInd
                                     pair_data[key].attrs['axisIndex'] = mateAxisInd
-                                    if AUGMENTED_LABELS:
-                                        pair_data[key].attrs['augmented_type'] = augmentedType
-                                        pair_data[key].attrs['augmented_dirIndex'] = augmentedDirInd
-                                        pair_data[key].attrs['augmented_axisIndex'] = augmentedAxisInd
+                                    pair_data[key].attrs['augmented_type'] = augmentedType
+                                    pair_data[key].attrs['augmented_dirIndex'] = augmentedDirInd
+                                    pair_data[key].attrs['augmented_axisIndex'] = augmentedAxisInd
                         else:
                             LOG(f'missing {h5fname}')
                     else:
@@ -754,7 +754,7 @@ def main():
                         curr_mate_stats = []
                         pairs_to_dirs, pairs_to_axes = load_axes(os.path.join(args.out_path, 'mc_data', f'{ind}.hdf5'))
                         for j,mate in enumerate(mates):
-                            mate_stat = {'Assembly': ind, 'dir_index': -1, 'axis_index': -1, 'type': mate.type}
+                            mate_stat = {'Assembly': ind, 'dir_index': -1, 'axis_index': -1, 'has_any_axis':False, 'has_same_dir_axis':False, 'type': mate.type}
                             part_indices = [assembly_info.occ_to_index[me[0]] for me in mate.matedEntities]
                             mate_origins = []
                             mate_dirs = []
@@ -775,12 +775,20 @@ def main():
                             mate_stat['axes_agree'] = mate_stat['dirs_agree'] and np.allclose(projected_mate_origins[0], projected_mate_origins[1], rtol=0, atol=epsilon_rel)
                             key = tuple(sorted(part_indices))
 
+                            mate_stat['has_any_axis'] = key in pairs_to_axes
+
                             if mate_stat['dirs_agree']:
                                 if key in pairs_to_dirs:
                                     for k,dir in enumerate(pairs_to_dirs[key]):
                                         dir_homo, _ = homogenize_sign(dir)
                                         if np.allclose(mate_dirs[0], dir_homo, rtol=0, atol=epsilon_rel):
                                             mate_stat['dir_index'] = k
+                                            break
+                                if key in pairs_to_axes:
+                                    for k, (dir, origin) in enumerate(pairs_to_axes[key]):
+                                        dir_homo, _ = homogenize_sign(dir)
+                                        if np.allclose(mate_dirs[0], dir_homo, rtol=0, atol=epsilon_rel):
+                                            mate_stat['has_same_dir_axis'] = True
                                             break
                             
                             if mate_stat['axes_agree']:

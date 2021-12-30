@@ -152,7 +152,7 @@ class SingleIntervalTree:
 
 def sizes_to_interval_tree(sizes):
     """
-    Returns a data structure which, given an index, returns the id of the interval delimited by `indices` in which that index lies.
+    Returns a data structure which, given an index, returns the id of the interval delimited by `sizes` in which that index lies.
     """
     interval2part = []
     offset = 0
