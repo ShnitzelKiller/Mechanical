@@ -27,6 +27,7 @@ class Mode(Enum):
     ADD_MC_DATA = "ADD_MC_DATA"
     ADD_MC_DEFINITIONS = "ADD_MC_DEFINITIONS"
     CHECK_MATES = "CHECK_MATES" #check the assemblies with only simple mate types for whether those mates adhere to shared axes inferred from MCs
+    ADD_CLOSEST_AXES = "ADD_CLOSEST_AXES"
 
 def load_axes(path):
     with h5py.File(path, 'r') as f:
@@ -45,7 +46,13 @@ def load_axes(path):
                     pair_to_axes[pair].append((dir, ax_origin))
     return pair_to_dirs, pair_to_axes #pair -> dir, and pair -> (dir, origin)
 
-
+def join_edgesets(arrays, dim=0):
+    newarrays = []
+    offset = 0
+    for arr in arrays:
+        newarrays.append(arr + offset)
+        offset += arrays.shape[dim]
+    return np.concatenate(arrays, dim)
 
 class EnumAction(Action):
     """
@@ -563,7 +570,7 @@ def main():
                 pass
                 #LOG_results(f'{torch_datapath} missing from directory')
 
-        elif args.mode == Mode.GENERATE or args.mode == Mode.DISTANCE or args.mode == Mode.AUGMENT or args.mode == Mode.ADD_MC_DATA or args.mode == Mode.CHECK_MATES or args.mode == Mode.ADD_MC_DEFINITIONS:
+        elif args.mode == Mode.GENERATE or args.mode == Mode.DISTANCE or args.mode == Mode.AUGMENT or args.mode == Mode.ADD_MC_DATA or args.mode == Mode.CHECK_MATES or args.mode == Mode.ADD_MC_DEFINITIONS or args.mode == Mode.ADD_CLOSEST_AXES:
             if args.mode == Mode.AUGMENT:
                 if os.path.isfile(torch_datapath):
                     assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, LOG, epsilon_rel=epsilon_rel, use_uvnet_features=use_uvnet_features, max_topologies=max_topologies)
@@ -710,7 +717,70 @@ def main():
                                     mc_dataset[r,2] = mcs[r].location_inference.inference_type.value
                                 mc_group.create_dataset(str(p), data=mc_dataset)
 
-                            
+            elif args.mode == Mode.ADD_CLOSEST_AXES:
+                mc_path = os.path.join(mcpath, f"{ind}.hdf5")
+                if os.path.isfile(mc_path) and os.path.isfile(torch_datapath):
+                    
+                    with h5py.File(os.path.join(mcpath, f"{ind}.hdf5"), "r+") as f:
+                        if 'mc_definitions' in f.keys():
+                            num_invalid = 0
+                            total_axes = 0
+
+                            batch = torch.load(torch_datapath)
+                            mc_origins = []
+                            mc_defs = []
+                            topo_offset = 0
+                            for p in range(len(f['mc_definitions'].keys())):
+                                mc_origins.append(np.array(f['mc_frames'][str(p)]['origins']))
+                                mc_defs.append(np.array(f['mc_definitions'][str(p)][:,:2]) + topo_offset)
+                                topo_offset += (batch.graph_idx == p).sum().item()
+                            mc_origins = np.vstack(mc_origins)
+                            mc_defs = np.vstack(mc_defs)
+
+                            for key in f['pair_data']:
+                                pair = tuple(int(k) for k in key.split(','))
+                                for ax_dir in f['pair_data'][key]['axes']:
+                                    ax_group = f['pair_data'][key]['axes'][ax_dir]
+                                    all_closest = []
+                                    hasClosest = True
+                                    for ax_clust in ax_group['indices']:
+                                        total_axes += 1
+                                        ax_clust_inds = np.array(f['dir_clusters'][ax_dir]['axial_clusters'][str(ax_clust)])
+                                        topo_ids = mc_defs[ax_clust_inds, 0]
+                                        #topo_types = batch.topo_type[topo_ids].numpy()
+                                        part_ids = batch.graph_idx.flatten()[topo_ids].numpy()
+                                        #ax_clust_inds_lr = [ax_clust_inds[(part_ids == pair[k]) & (topo_types == 0)] for k in range(2)]
+                                        ax_clust_inds_lr = [ax_clust_inds[(part_ids == pair[k])] for k in range(2)]
+                                        if len(ax_clust_inds_lr[0]) > 0 and len(ax_clust_inds_lr[1] > 0):
+                                            origins_l = mc_origins[ax_clust_inds_lr[0]]
+                                            origins_r = mc_origins[ax_clust_inds_lr[1]]
+                                            mindist = np.inf
+                                            closestpair = (-1, -1)
+                                            for li in range(origins_l.shape[0]):
+                                                for ri in range(origins_r.shape[0]):
+                                                    disp = origins_l[li] - origins_r[ri]
+                                                    dist = np.dot(disp, disp)
+                                                    if dist < mindist:
+                                                        closestpair = (li, ri)
+                                            closest_mc_ids = [ax_clust_inds_lr[k][closestpair[k]] for k in range(2)]
+                                            all_closest.append(closest_mc_ids)
+                                        else:
+                                            hasClosest = False
+                                            num_invalid += 1
+                                            break
+                                    if hasClosest:
+                                        all_closest = np.array(all_closest).T
+                                        assert(all_closest.shape[1] == len(ax_group['indices']))
+                                        if 'closest_indices' in ax_group:
+                                            ax_group['closest_indices'][...] = all_closest
+                                        else:
+                                            ax_group.create_dataset('closest_indices', data=all_closest)
+                            stat = {'num_invalid': num_invalid, 'total_axes': total_axes}
+                            all_stats.append(stat)
+                            processed_indices.append(ind)
+
+                                    
+
                                 
 
             elif args.mode == Mode.ADD_MC_DATA:
@@ -949,6 +1019,9 @@ def main():
                 stat_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))
             mate_stats_df = ps.DataFrame(all_mate_stats, index=mate_indices)
             mate_stats_df.to_hdf(os.path.join(statspath, 'mate_stats_all.h5'), 'mates')
+        elif args.mode == Mode.ADD_CLOSEST_AXES:
+            stats_df = ps.DataFrame(all_stats, index=processed_indices)
+            stats_df.to_parquet(os.path.join(statspath, 'stats_all.parquet'))
     else:
         print('indices:',processed_indices)
         print(all_stats)
