@@ -228,7 +228,7 @@ def main():
     parser.add_argument('--max_groups', type=int, default=10)
     parser.add_argument('--max_topologies', type=int, default=5000)
     parser.add_argument('--max_mc_pairs', type=int, default=100000)
-    parser.add_argument('--stride', type=int, default=500)
+    parser.add_argument('--stride', type=int, default=100)
     parser.add_argument('--no_stats', dest='save_stats', action='store_false')
     parser.add_argument('--save_stats', dest='save_stats', action='store_true')
     parser.set_defaults(save_stats=True)
@@ -370,7 +370,7 @@ def main():
     if args.mode == Mode.ADD_MATE_LABELS:
         #mate_check_df = ps.read_parquet('/fast/jamesn8/assembly_data/assembly_torch2_fixsize/stats_check_mates/mate_stats_all.parquet')
         mate_check_df = ps.read_hdf('/fast/jamesn8/assembly_data/assembly_torch2_fixsize/stats_check_mates_all_proposals_validate_rigidcomps_more_axis_stats/mate_stats_all.h5','mates')
-        newmate_stats_df = ps.read_hdf('/fast/jamesn8/assembly_data/assembly_torch2_fixsize/stats_augment_matchedonly/newmate_stats_all.h5','newmates')
+        newmate_stats_df = ps.read_hdf('/fast/jamesn8/assembly_data/assembly_torch2_fixsize/stats_augment_matched_axes_only_filtered/newmate_stats_all.h5','newmates')
         newmate_stats_df.set_index('Assembly', inplace=True)
     def record_val(val):
         with open(resumefile, 'w') as f:
@@ -470,15 +470,13 @@ def main():
                             rigid_comps = list(part_subset['RigidComponentID'])
                             if AUGMENTED_LABELS:
                                 augmented_pairs_to_index = dict()
-                                newmate_subset = newmate_stats_df.loc[ind]
-                                if ind in newmate_subset.index:
-                                    if newmate_subset.ndim == 1:
-                                        newmate_subset = ps.DataFrame([newmate_subset], columns=newmate_subset.keys())
+                                if ind in newmate_stats_df.index:
+                                    newmate_subset = newmate_stats_df.loc[[ind]]
                                     for m in range(newmate_subset.shape[0]):
                                         part_indices = tuple(sorted([occ_to_index[newmate_subset.iloc[m][k]] for k in ['part1','part2']]))
                                         augmented_pairs_to_index[part_indices] = m
-                        
-                            with h5py.File(h5fname,'r+') as f:
+                            fmode = 'r' if DRY_RUN else 'r+'
+                            with h5py.File(h5fname,fmode) as f:
                                 pair_data = f['pair_data']
                                 for key in pair_data.keys():
                                     pair = tuple(sorted([int(k) for k in key.split(',')]))
@@ -505,14 +503,22 @@ def main():
                                     
                                     #densify fasten mates
                                     if rigid_comps[pair[0]] == rigid_comps[pair[1]]:
-                                        augmentedType = mate_types.index('FASTENED')
-                                
-                                    pair_data[key].attrs['type'] = mateType
-                                    pair_data[key].attrs['dirIndex'] = mateDirInd
-                                    pair_data[key].attrs['axisIndex'] = mateAxisInd
-                                    pair_data[key].attrs['augmented_type'] = augmentedType
-                                    pair_data[key].attrs['augmented_dirIndex'] = augmentedDirInd
-                                    pair_data[key].attrs['augmented_axisIndex'] = augmentedAxisInd
+                                        augmentedType = mate_types.index(MateTypes.FASTENED.value)
+
+                                    if not DRY_RUN:
+                                        pair_data[key].attrs['type'] = mateType
+                                        pair_data[key].attrs['dirIndex'] = mateDirInd
+                                        pair_data[key].attrs['axisIndex'] = mateAxisInd
+                                        pair_data[key].attrs['augmented_type'] = augmentedType
+                                        pair_data[key].attrs['augmented_dirIndex'] = augmentedDirInd
+                                        pair_data[key].attrs['augmented_axisIndex'] = augmentedAxisInd
+                                    else:
+                                        assert(pair_data[key].attrs['type'] == mateType)
+                                        assert(pair_data[key].attrs['dirIndex'] == mateDirInd)
+                                        assert(pair_data[key].attrs['axisIndex'] == mateAxisInd)
+                                        if augmentedType == mate_types.index(MateTypes.FASTENED.value):
+                                            assert(pair_data[key].attrs['augmented_type'] == augmentedType)
+
                         else:
                             LOG(f'missing {h5fname}')
                     else:
