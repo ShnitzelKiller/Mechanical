@@ -732,6 +732,8 @@ class AssemblyInfo:
                     if pair_to_dirs is not None and pair_to_axes is not None:
                         dir_proposals = pair_to_dirs[pair] if pair in pair_to_dirs else []
                         axes_proposals = pair_to_axes[pair] if pair in pair_to_axes else []
+                        if (require_axis or len(dir_proposals) == 0) and len(axes_proposals) == 0:
+                            continue
                         stat['num_dir_proposals'] = len(dir_proposals)
                         stat['num_axes_proposals'] = len(axes_proposals)
                         pathinfo = self.find_mate_path(mates2, pair[0], pair[1], threshold=self.epsilon_rel, dir_proposals=dir_proposals, axes_proposals=axes_proposals, require_axis=require_axis)
