@@ -72,6 +72,12 @@ def occ_to_mesh(g, tf=None):
         V = (tf[:3,:3] @ V.T).T + tf[:3,3]
     return V, F
 
+def filter_assembly(geo, mates, indices):
+    id_to_occ = list(geo.keys())
+    occ_to_id = {occ: i for i,occ in enumerate(id_to_occ)}
+    geo_f = {occ: geo[occ] for occ in geo if occ_to_id[occ] in indices}
+    mates_f = [mate for mate in mates if occ_to_id[mate.matedEntities[0][0]] in indices and occ_to_id[mate.matedEntities[1][0]] in indices]
+    return geo_f, mates_f
 
 def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600):
     #max_part_dim = max([max(geo[i][1].V.max(0)-geo[i][1].V.min(0)) for i in geo if geo[i][1].V.shape[0] > 0])

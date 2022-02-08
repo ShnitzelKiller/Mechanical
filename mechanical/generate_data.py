@@ -506,12 +506,14 @@ def main():
                                         augmentedType = mate_types.index(MateTypes.FASTENED.value)
 
                                     if not DRY_RUN:
-                                        pair_data[key].attrs['type'] = mateType
-                                        pair_data[key].attrs['dirIndex'] = mateDirInd
-                                        pair_data[key].attrs['axisIndex'] = mateAxisInd
-                                        pair_data[key].attrs['augmented_type'] = augmentedType
-                                        pair_data[key].attrs['augmented_dirIndex'] = augmentedDirInd
-                                        pair_data[key].attrs['augmented_axisIndex'] = augmentedAxisInd
+                                        if AUGMENTED_LABELS:
+                                            pair_data[key].attrs['augmented_type'] = augmentedType
+                                            pair_data[key].attrs['augmented_dirIndex'] = augmentedDirInd
+                                            pair_data[key].attrs['augmented_axisIndex'] = augmentedAxisInd
+                                        else:
+                                            pair_data[key].attrs['type'] = mateType
+                                            pair_data[key].attrs['dirIndex'] = mateDirInd
+                                            pair_data[key].attrs['axisIndex'] = mateAxisInd
                                     else:
                                         assert(pair_data[key].attrs['type'] == mateType)
                                         assert(pair_data[key].attrs['dirIndex'] == mateDirInd)
