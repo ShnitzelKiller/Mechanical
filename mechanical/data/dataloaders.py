@@ -1,5 +1,41 @@
 import os
 import pandas as ps
+import logging
+
+
+class GlobalData:
+    def __init__(self):
+        self.df_name = '/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5'
+        self.updated_df_name = '/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5_segmentation.h5'
+
+    @property
+    def assembly_df(self):
+        if not hasattr(self, '_assembly_df'):
+            logging.info('Loading assembly dataframe')
+            self._assembly_df = ps.read_hdf(self.df_name,'assembly')
+            logging.info('done')
+        return self._assembly_df
+    
+    @property
+    def mate_df(self):
+        if not hasattr(self, '_mate_df'):
+            logging.info('Loading mate dataframe')
+            self._mate_df = ps.read_hdf(self.df_name,'mate')
+            self._mate_df['MateIndex'] = self._mate_df.index
+            self._mate_df.set_index('Assembly', inplace=True)
+            logging.info('done')
+        return self._mate_df
+    
+    @property
+    def part_df(self):
+        if not hasattr(self, '_part_df'):
+            logging.info('Loading part dataframe')
+            self._part_df = ps.read_hdf(self.updated_df_name,'part')
+            self._part_df['PartIndex'] = self._part_df.index
+            self._part_df.set_index('Assembly', inplace=True)
+            logging.info('done')
+        return self._part_df
+
 
 class Stats:
     def __init__(self, format='parquet', key=None):

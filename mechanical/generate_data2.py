@@ -2,7 +2,7 @@ from argparse import ArgumentParser
 import logging
 import os
 import pandas as ps
-from mechanical.data import Dataset, TestVisitor
+from mechanical.data import Dataset, TestVisitor, GlobalData
 
 parser = ArgumentParser()
 parser.add_argument('--index_file', default='/projects/grail/jamesn8/projects/mechanical/Mechanical/data/dataset/simple_valid_dataset.txt')
@@ -19,25 +19,11 @@ def main():
         os.mkdir(statspath)
     logging.basicConfig(filename=os.path.join(statspath, 'log.txt'), level=1)
 
-    logging.info('Loading dataframes...')
-
-    datapath = '/projects/grail/benjones/cadlab'
-    df_name = '/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5'
-    updated_df_name = '/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5_segmentation.h5'
-    assembly_df = ps.read_hdf(df_name,'assembly')
-    mate_df = ps.read_hdf(df_name,'mate')
-    part_df = ps.read_hdf(updated_df_name,'part')
-    mate_df['MateIndex'] = mate_df.index
-    part_df['PartIndex'] = part_df.index
-    mate_df.set_index('Assembly', inplace=True)
-    part_df.set_index('Assembly', inplace=True)
-
-    logging.info('done')
-
+    globaldata = GlobalData()
     dataset = Dataset(args.index_file, args.stride, statspath, args.start_index, args.stop_index)
 
     #debug
-    action = TestVisitor(assembly_df, part_df, mate_df, datapath, False, .001, 5000)
+    action = TestVisitor(globaldata, False, .001, 5000)
     
     dataset.map_data(action)
 

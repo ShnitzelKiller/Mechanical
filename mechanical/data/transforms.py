@@ -3,6 +3,7 @@ import os
 import json
 import numpy as np
 from mechanical.data import AssemblyInfo
+import logging
 
 class Data:
     def __init__(self, ind):
@@ -21,10 +22,10 @@ def df_to_mates(mate_subset):
     return mates
 
 class AssemblyLoader:
-    def __init__(self, assembly_df, part_df, mate_df, datapath, use_uvnet_features, epsilon_rel, max_topologies):
-        self.assembly_df = assembly_df
-        self.part_df = part_df
-        self.mate_df = mate_df
+    def __init__(self, global_data, datapath='/projects/grail/benjones/cadlab', use_uvnet_features=False, epsilon_rel=0.001, max_topologies=5000):
+        self.assembly_df = global_data.assembly_df
+        self.part_df = global_data.part_df
+        self.mate_df = global_data.mate_df
         self.datapath = datapath
         self.use_uvnet_features = use_uvnet_features
         self.epsilon_rel = epsilon_rel

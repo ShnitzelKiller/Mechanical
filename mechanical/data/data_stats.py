@@ -1,8 +1,9 @@
 from mechanical.data import AssemblyLoader, Stats
+import logging
 
 class TestVisitor:
-    def __init__(self,assembly_df, part_df, mate_df, datapath, use_uvnet_features, epsilon_rel, max_topologies):
-        self.transforms = AssemblyLoader(assembly_df, part_df, mate_df, datapath, use_uvnet_features, epsilon_rel, max_topologies)
+    def __init__(self, global_data, use_uvnet_features, epsilon_rel, max_topologies):
+        self.transforms = AssemblyLoader(global_data, use_uvnet_features=use_uvnet_features, epsilon_rel=epsilon_rel, max_topologies=max_topologies)
     
     def __call__(self, data):
         out_dict = {}
