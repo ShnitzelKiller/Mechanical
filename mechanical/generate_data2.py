@@ -2,7 +2,7 @@ from argparse import ArgumentParser
 import logging
 import os
 import pandas as ps
-from mechanical.data import Dataset, AssemblyLoader, Stats
+from mechanical.data import Dataset, TestVisitor
 
 parser = ArgumentParser()
 parser.add_argument('--index_file', default='/projects/grail/jamesn8/projects/mechanical/Mechanical/data/dataset/simple_valid_dataset.txt')
@@ -37,14 +37,9 @@ def main():
     dataset = Dataset(args.index_file, args.stride, statspath, args.start_index, args.stop_index)
 
     #debug
-    transforms = AssemblyLoader(assembly_df, part_df, mate_df, datapath, False, .001, 5000)
-    def action(data):
-        out_dict = {}
-        stat = Stats()
-        stat.append({'num_parts': len(data.assembly_info.parts)}, data.ind)
-        out_dict['assembly_stats'] = stat
-        return out_dict
-    dataset.map_data(transforms, action)
+    action = TestVisitor(assembly_df, part_df, mate_df, datapath, False, .001, 5000)
+    
+    dataset.map_data(action)
 
 
 
