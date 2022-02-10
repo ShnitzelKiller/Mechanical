@@ -5,11 +5,12 @@ import time
 import numpy as np
 import numpy.linalg as LA
 import torch
-from torch_geometric.data import Batch
-from pspart import Part, NNHash
+#from torch_geometric.data import Batch
+from pspart import NNHash
+import pspy
 from mechanical.utils import find_neighbors, inter_group_matches, cluster_points, homogenize_frame, external_adjacency_list_from_brepdata, MateTypes
 from scipy.spatial.transform import Rotation as R
-from automate.nn.sbgcn import BrepGraphData
+from automate import PartFeatures, part_to_graph, flatbatch
 import torch_scatter
 import trimesh.proximity as proximity
 import trimesh.interval as interval
@@ -28,13 +29,14 @@ def bboxes_overlap(bbox1, bbox2, margin=0):
         overlap = overlap and intersects
     return overlap
 
-
+def get_num_topologies(part):
+    return sum(len(getattr(part.brep.nodes, key)) for key in ['faces', 'vertices', 'edges','loops'])
 
 def global_bounding_box(parts, transforms=None):
     if transforms is None:
-        allpoints = [part.V for part in parts if part.V.shape[0] > 0]
+        allpoints = [part.mesh.V for part in parts if part.mesh.V.shape[0] > 0]
     else:
-        allpoints = [(tf[:3,:3] @ part.V.T + tf[:3,3,np.newaxis]).T for tf, part in zip(transforms, parts) if part.V.shape[0] > 0]
+        allpoints = [(tf[:3,:3] @ part.mesh.V.T + tf[:3,3,np.newaxis]).T for tf, part in zip(transforms, parts) if part.mesh.V.shape[0] > 0]
     if len(allpoints) == 0:
         return None
     minPt = np.array([points.min(axis=0) for points in allpoints]).min(axis=0)
@@ -107,13 +109,15 @@ class AssemblyInfo:
         self.mco_hashes = [] #spatial hashes of origins
         self.mcz_hashes = [] #spatial hashes of homogenized z direction
         self.mcr_hashes = [] #spatial hashes of origin + homogenized z dir
-
+        self.computed_data_structures = False
+        part_opts = pspy.PartOptions()
+        part_opts.num_uv_samples = 0
         for path, occ, tf in zip(part_paths, occ_ids, transforms):
             assert(os.path.isfile(path))
             with open(path) as partf:
                 part_str = partf.read()
-                part = Part(part_str, uv_features=False)
-                if part.valid:
+                part = pspy.Part(part_str, part_opts)
+                if part.is_valid:
                     self.part_paths.append(path)
                     self.part_caches.append(part_str)
                     self.parts.append(part)
@@ -149,19 +153,10 @@ class AssemblyInfo:
 
                 self.transform_parts()
                 
-                if self.valid:
-                    self.precompute_geometry()
+                # if self.valid:
+                #     self.precompute_geometry()
 
-                    list_of_lists = [self.parts, self.part_paths, self.part_caches, \
-                            self.occ_transforms, self.occ_to_index, self.occ_ids, self.mc_origins_all, \
-                            self.mc_rots_all, self.mc_rots_homogenized_all, \
-                            self.mco_hashes, self.mcz_hashes, self.mcr_hashes, \
-                            self.mate_transforms, self.part_transforms]
-                    try:
-                        assert(all(len(x)==len(self.parts) for x in list_of_lists))
-                    except AssertionError as e:
-                        e.args += (self.stats, [len(lst) for lst in list_of_lists])
-                        raise
+                    
         if self.valid: 
             if len(self.occ_ids) > 0:
                 assert([self.occ_to_index[occi] == i for i, occi in enumerate(self.occ_ids)])
@@ -175,16 +170,22 @@ class AssemblyInfo:
         p_normalized[3,3] = self.maxdim #todo: figure out if this is double the factor
 
         norm_matrices = [p_normalized @ tf for tf in self.occ_transforms]
-        transformed_parts = [Part(cached_part, mat, uv_features=self.use_uvnet_features) for cached_part, mat in zip(self.part_caches, norm_matrices)]
+        transformed_parts = []
+        for cached_part, mat in zip(self.part_caches, norm_matrices):
+            part_opts = pspy.PartOptions()
+            part_opts.transform = True
+            part_opts.transform_matrix = mat
+            transformed_parts.append(pspy.Part(cached_part, part_opts))
+
         self.stats['num_normalized_parts_with_discrepancies'] = self._num_normalized_parts_with_discrepancies(transformed_parts)
 
         #filter out invalid ones from the existing structures:
-        num_invalid = sum([not part.valid for part in transformed_parts])
+        num_invalid = sum([not part.is_valid for part in transformed_parts])
         self.stats['num_invalid_transformed_parts'] = num_invalid
         if num_invalid > 0:
             if num_invalid < len(self.parts):
                 for part, occ in zip(transformed_parts, self.occ_ids):
-                    if not part.valid:
+                    if not part.is_valid:
                         self.invalid_occs.add(occ)
                 
                 self.parts, self.part_paths, self.part_caches, norm_matrices, self.occ_transforms, self.occ_ids = zip(*[group for group in zip(transformed_parts, self.part_paths, self.part_caches, norm_matrices, self.occ_transforms, self.occ_ids) if group[0].valid])
@@ -201,30 +202,42 @@ class AssemblyInfo:
 
 
     def precompute_geometry(self):
-        #analyze mate connectors
-        for tf,part in zip(self.part_transforms, self.parts):
-            assert(part.valid)
-            mc_origins = []
-            mc_rots = []
-            for mc in part.all_mate_connectors:
-                cs = mc.get_coordinate_system()
-                cs_transformed = tf @ cs
-                origin, rot = cs_to_origin_frame(cs_transformed)
-                mc_origins.append(origin)
-                mc_rots.append(rot)
+        if not self.computed_data_structures:
+            #analyze mate connectors
+            for tf,part in zip(self.part_transforms, self.parts):
+                assert(part.is_valid)
+                mc_origins = []
+                mc_rots = []
+                for mc in part.default_mcfs:
+                    cs = mc.get_coordinate_system()
+                    cs_transformed = tf @ cs
+                    origin, rot = cs_to_origin_frame(cs_transformed)
+                    mc_origins.append(origin)
+                    mc_rots.append(rot)
 
-            self.mc_rots_all.append(mc_rots)
-            self.mc_origins_all.append(mc_origins)
-            mc_rots_homogenized = [homogenize_frame(rot, z_flip_only=True) for rot in mc_rots]
-            self.mc_rots_homogenized_all.append(mc_rots_homogenized)
+                self.mc_rots_all.append(mc_rots)
+                self.mc_origins_all.append(mc_origins)
+                mc_rots_homogenized = [homogenize_frame(rot, z_flip_only=True) for rot in mc_rots]
+                self.mc_rots_homogenized_all.append(mc_rots_homogenized)
 
-            mc_rays = [np.concatenate([origin,rot[:,2]]) for origin, rot in zip(mc_origins, mc_rots_homogenized)]
-            origin_hash = NNHash(mc_origins, 3, self.epsilon_rel)
-            z_hash = NNHash([rot[:,2] for rot in mc_rots_homogenized], 3, self.epsilon_rel)
-            ray_hash = NNHash(mc_rays, 6, self.epsilon_rel)
-            self.mco_hashes.append(origin_hash)
-            self.mcz_hashes.append(z_hash)
-            self.mcr_hashes.append(ray_hash)
+                mc_rays = [np.concatenate([origin,rot[:,2]]) for origin, rot in zip(mc_origins, mc_rots_homogenized)]
+                origin_hash = NNHash(mc_origins, 3, self.epsilon_rel)
+                z_hash = NNHash([rot[:,2] for rot in mc_rots_homogenized], 3, self.epsilon_rel)
+                ray_hash = NNHash(mc_rays, 6, self.epsilon_rel)
+                self.mco_hashes.append(origin_hash)
+                self.mcz_hashes.append(z_hash)
+                self.mcr_hashes.append(ray_hash)
+            self.computed_data_structures = True
+            list_of_lists = [self.parts, self.part_paths, self.part_caches, \
+                            self.occ_transforms, self.occ_to_index, self.occ_ids, self.mc_origins_all, \
+                            self.mc_rots_all, self.mc_rots_homogenized_all, \
+                            self.mco_hashes, self.mcz_hashes, self.mcr_hashes, \
+                            self.mate_transforms, self.part_transforms]
+            try:
+                assert(all(len(x)==len(self.parts) for x in list_of_lists))
+            except AssertionError as e:
+                e.args += (self.stats, [len(lst) for lst in list_of_lists])
+                raise
 
     def find_mated_pairs(self, mate):
         """
@@ -245,6 +258,7 @@ class AssemblyInfo:
         # - pin slots: Unsupported for now
 
         epsilon_rel2 = self.epsilon_rel * self.epsilon_rel
+        self.precompute_geometry()
 
         if len(mate.matedEntities) != 2:
             self.log('INCORRECT NUMBER OF MATED ENTITIES:',len(mate.matedEntities))
@@ -269,9 +283,9 @@ class AssemblyInfo:
             mate_origins.append(origin)
             mate_rots_homogenized.append(rot_homogenized)
         
-        if mate.type == 'FASTENED':
+        if mate.type == MateTypes.FASTENED:
             matches = find_neighbors(*[[np.concatenate([origin, rot[:,2]]) for origin, rot in zip(self.mc_origins_all[ind], self.mc_rots_homogenized_all[ind])] for ind in part_indices], 6, self.epsilon_rel)
-        elif mate.type == 'BALL':
+        elif mate.type == MateTypes.BALL:
             same_origin_inds = [self.mco_hashes[ind].get_nearest_points(mate_origins[0]) for ind in part_indices]
             matches = [(i, j) for i in same_origin_inds[0] for j in same_origin_inds[1]]
         else:
@@ -282,10 +296,10 @@ class AssemblyInfo:
                 matches = []
             else:
                 subset_stacked = [np.array([self.mc_origins_all[ind][i] for i in same_dir_inds_i]) for ind, same_dir_inds_i in zip(part_indices, same_dir_inds)]
-                if mate.type == 'CYLINDRICAL' or mate.type == 'REVOLUTE' or mate.type == 'SLIDER':
+                if mate.type == MateTypes.CYLINDRICAL or mate.type == MateTypes.REVOLUTE or mate.type == MateTypes.SLIDER:
                     projected_origins = [list(subset_stacked_i @ xy_plane) for subset_stacked_i in subset_stacked] #origins of mcfs with the same z direction projected onto a shared xy plane
                     
-                    if mate.type == 'SLIDER':
+                    if mate.type == MateTypes.SLIDER:
                         matches = find_neighbors(*projected_origins, 2, self.epsilon_rel) #neighbors are found in the subset of same direction mcs
                         matches = _transform_matches(matches, same_dir_inds)
                     else:
@@ -300,9 +314,9 @@ class AssemblyInfo:
                             axial_indices.append(axial_indices_i)
                         if any([len(axial_indices_i) == 0 for axial_indices_i in axial_indices]):
                             matches = []
-                        elif mate.type == 'CYLINDRICAL':
+                        elif mate.type == MateTypes.CYLINDRICAL:
                             matches = [(i, j) for i in axial_indices[0] for j in axial_indices[1]]
-                        elif mate.type == 'REVOLUTE':
+                        elif mate.type == MateTypes.REVOLUTE:
                             subset_axial = [np.array([self.mc_origins_all[ind][i] for i in axial_indices_i]) for ind, axial_indices_i in zip(part_indices, axial_indices)]
                             z_positions = [list((subset_stacked_i @ z_dir)[:,np.newaxis]) for subset_stacked_i in subset_axial]
                             matches = find_neighbors(*z_positions, 1, self.epsilon_rel) #neighbors are found in the subset of axial mcs
@@ -310,13 +324,13 @@ class AssemblyInfo:
                         else:
                             assert(False)
 
-                elif mate.type == 'PLANAR':
+                elif mate.type == MateTypes.PLANAR:
                     z_positions = [list((subset_stacked_i @ z_dir)[:,np.newaxis]) for subset_stacked_i in subset_stacked]
                     matches = find_neighbors(*z_positions, 1, self.epsilon_rel) #neighbors are found in the subset of same direction mcs
                     matches = _transform_matches(matches, same_dir_inds)
-                elif mate.type == 'PARALLEL':
+                elif mate.type == MateTypes.PARALLEL:
                     matches = [(i, j) for i in same_dir_inds[0] for j in same_dir_inds[1]]
-                elif mate.type == 'PIN_SLOT':
+                elif mate.type == MateTypes.PIN_SLOT:
                     matches = []
                 else:
                     raise ValueError
@@ -326,26 +340,26 @@ class AssemblyInfo:
         return sum([len(origins) for origins in self.mc_origins_all])
 
     def num_topologies(self):
-        return sum([part.num_topologies for part in self.parts])
+        return sum([get_num_topologies(part) for part in self.parts])
     
     def num_invalid_parts(self):
-        return sum([not npart.valid for npart in self.parts])
+        return sum([not npart.is_valid for npart in self.parts])
     
     def _num_normalized_parts_with_discrepancies(self, norm_parts):
         num_discrepancies = 0
         for npart, part in zip(norm_parts, self.parts):
-            if npart.num_topologies != part.num_topologies:
+            if get_num_topologies(npart) != get_num_topologies(part):
                 num_discrepancies += 1
-            elif len(npart.all_mate_connectors) != len(part.all_mate_connectors):
+            elif len(npart.default_mcfs) != len(part.default_mcfs):
                 num_discrepancies += 1
             else:
                 mc_data = set()
-                for mc in part.all_mate_connectors:
-                    mc_dat = (mc.orientation_inference.topology_ref, mc.location_inference.topology_ref, mc.location_inference.inference_type.value)
+                for mc in part.default_mcfs:
+                    mc_dat = (mc.ref.axis_ref.reference_index, mc.ref.axis_ref.reference_type, mc.ref.origin_ref.reference_index, mc.ref.origin_ref.reference_type, mc.ref.origin_ref.inference_type.value)
                     mc_data.add(mc_dat)
                 mc_data_normalized = set()
-                for mc in npart.all_mate_connectors:
-                    mc_dat = (mc.orientation_inference.topology_ref, mc.location_inference.topology_ref, mc.location_inference.inference_type.value)
+                for mc in npart.default_mcfs:
+                    mc_dat = (mc.ref.axis_ref.reference_index, mc.ref.axis_ref.reference_type, mc.ref.origin_ref.reference_index, mc.ref.origin_ref.reference_type, mc.ref.origin_ref.inference_type.value)
                     mc_data_normalized.add(mc_dat)
                 if mc_data != mc_data_normalized:
                     num_discrepancies += 1
@@ -399,6 +413,7 @@ class AssemblyInfo:
         and dist is the euclidian distance between the mate connector origins.
 
         """
+        self.precompute_geometry()
         mc_counts = [len(mcos) for mcos in self.mc_origins_all]
         mc_part_labels = [i for i,l in enumerate(self.mc_origins_all) for x in l]
         
@@ -483,10 +498,10 @@ class AssemblyInfo:
         self.stats['num_degenerate_bboxes'] = 0
         for part in self.parts:
             bbox = part.bounding_box()
-            if not part.valid:
+            if not part.is_valid:
                 self.stats['num_degenerate_bboxes'] += 1
             bboxes.append(bbox)
-            mesh = trimesh.Trimesh(vertices=part.V, faces=part.F)
+            mesh = trimesh.Trimesh(vertices=part.mesh.V, faces=part.mesh.F)
             tree = proximity.ProximityQuery(mesh)
             aabbs.append(tree)
         
@@ -498,9 +513,9 @@ class AssemblyInfo:
                     bbox1 = bboxes[i]
                     bbox2 = bboxes[j]
                     if bboxes_overlap(bbox1, bbox2, threshold):
-                        closest, dists, id = aabbs[i].on_surface(self.parts[j].V)
+                        closest, dists, id = aabbs[i].on_surface(self.parts[j].mesh.V)
                         minDist = dists.min()
-                        closest, dists, id = aabbs[j].on_surface(self.parts[i].V)
+                        closest, dists, id = aabbs[j].on_surface(self.parts[i].mesh.V)
                         minDist = min(minDist, dists.min())
                         pairs[(i,j)] = minDist
         return pairs
@@ -756,7 +771,14 @@ class AssemblyInfo:
     def get_onshape(self):
         return {self.occ_ids[i]: (np.identity(4), self.parts[i]) for i in range(len(self.parts))}
 
-    def create_batches(self, mates, max_z_groups=10, max_mc_pairs=100000):
+
+    def create_batches(self):
+        options = PartFeatures()
+        datalist = [part_to_graph(part, options) for part in self.parts]
+        return flatbatch(datalist)
+
+
+    def create_batches_legacy(self, mates, max_z_groups=10, max_mc_pairs=100000):
         """
         Create a list of batches of BrepData objects for this assembly. Returns False if any part has too many topologies to fit in a batch.
         """
@@ -792,7 +814,7 @@ class AssemblyInfo:
         part2offset = [0] * len(self.parts)
         offset = 0
         for i,part in enumerate(self.parts[:-1]):
-            offset += part.num_topologies
+            offset += get_num_topologies(part)
             part2offset[i+1] = offset
 
         proposal_start = time.time()
@@ -899,7 +921,7 @@ class AssemblyInfo:
         for part_pair in indices_by_part:
             key_indices = indices_by_part[part_pair]
             topo_offsets = [part2offset[partid] for partid in part_pair]
-            pair_mc_lists = [self.parts[pi].all_mate_connectors for pi in part_pair]
+            pair_mc_lists = [self.parts[pi].default_mcfs for pi in part_pair]
             for i in key_indices:
                 _, mc_pair, mateId = mc_keys[i]
                 mcs = [pair_mc_list[mci] for pair_mc_list, mci in zip(pair_mc_lists, mc_pair)]

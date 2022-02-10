@@ -53,19 +53,23 @@ class Stats:
     def to_df(self, incremental=False):
         if not incremental:
             self.checkpoint = 0
-        df = ps.DataFrame(self.rows[self.checkpoint:], index=self.indices[self.checkpoint:] if self.indices else None)
-        if incremental:
-            self.checkpoint = len(self.rows)
-        return df
+        if len(self.rows) - self.checkpoint > 0:
+            df = ps.DataFrame(self.rows[self.checkpoint:], index=self.indices[self.checkpoint:] if self.indices else None)
+            if incremental:
+                self.checkpoint = len(self.rows)
+            return df
+        else:
+            return None
 
     def save_df(self, path, incremental=False):
         df = self.to_df(incremental=incremental)
-        if incremental:
-            path = path + f'_{self.checkpoint}'
-        if self.format == 'parquet':
-            df.to_parquet(path + '.parquet')
-        elif self.format == 'hdf':
-            df.to_hdf(path + '.h5', self.key)
+        if df is not None:
+            if incremental:
+                path = path + f'_{self.checkpoint}'
+            if self.format == 'parquet':
+                df.to_parquet(path + '.parquet')
+            elif self.format == 'hdf':
+                df.to_hdf(path + '.h5', self.key)
     
     def combine(self, other):
         self.rows += other.rows
@@ -88,9 +92,11 @@ class Dataset:
         action: function that returns a dictionary from names to Stats objects
         """
         for i,ind in enumerate(self.index[self.start_index:self.stop_index]):
+            logging.info(f'processing {i+self.start_index}/{len(self.index)} ({ind})')
             data = action.transforms(ind)
             results = action(data)
-            self.log_results(results)
+            if results is not None:
+                self.log_results(results)
             if (i+self.start_index+1) % self.stride == 0:
                 self.save_results(incremental=True)
         self.save_results(incremental=False)
