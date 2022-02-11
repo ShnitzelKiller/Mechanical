@@ -79,8 +79,16 @@ class Stats:
 
 class Dataset:
     def __init__(self, index_file, stride, stats_path, start_index=0, stop_index=-1):
-        with open(index_file,'r') as f:
-            self.index = [int(l.rstrip()) for l in f.readlines()]
+        if isinstance(index_file,str):
+            with open(index_file,'r') as f:
+                self.index = [int(l.rstrip()) for l in f.readlines()]
+        elif isinstance(index_file, list):
+            with open(index_file[0],'r') as f:
+                self.index = {int(l.rstrip()) for l in f.readlines()}
+            for fname in index_file[1:]:
+                with open(fname,'r') as f:
+                    self.index = self.index.intersection({int(l.rstrip()) for l in f.readlines()})
+            self.index = sorted(list(self.index))
         self.stride = stride
         self.stats_path = stats_path
         self.stats = dict()

@@ -1,4 +1,4 @@
-from logging import log
+import logging
 import os
 import random
 import time
@@ -90,13 +90,13 @@ class AssemblyInfo:
             self.occ_to_index[occ] = i
               
 
-    def __init__(self, part_paths, transforms, occ_ids, logging_fn=print, epsilon_rel=0.001, use_uvnet_features=False, max_topologies=10000, skip_hashing=False):
+    def __init__(self, part_paths, transforms, occ_ids, epsilon_rel=0.001, use_uvnet_features=False, max_topologies=10000, include_mcfs=True):
         self.epsilon_rel = epsilon_rel
         self.use_uvnet_features = use_uvnet_features
         self.stats = dict()
         self.mate_stats = []
         self.invalid_occs = set()
-        self.log = logging_fn
+        self.include_mcfs = include_mcfs
 
         self.parts = []
         self.part_paths = []
@@ -111,11 +111,13 @@ class AssemblyInfo:
         self.mcr_hashes = [] #spatial hashes of origin + homogenized z dir
         self.computed_data_structures = False
         part_opts = pspy.PartOptions()
+        part_opts.default_mcfs = include_mcfs
         part_opts.num_uv_samples = 0
         for path, occ, tf in zip(part_paths, occ_ids, transforms):
             assert(os.path.isfile(path))
             with open(path) as partf:
                 part_str = partf.read()
+                logging.debug(f'loading initial part {occ}')
                 part = pspy.Part(part_str, part_opts)
                 if part.is_valid:
                     self.part_paths.append(path)
@@ -171,10 +173,13 @@ class AssemblyInfo:
 
         norm_matrices = [p_normalized @ tf for tf in self.occ_transforms]
         transformed_parts = []
-        for cached_part, mat in zip(self.part_caches, norm_matrices):
+        for cached_part, mat, occ in zip(self.part_caches, norm_matrices, self.occ_ids):
             part_opts = pspy.PartOptions()
             part_opts.transform = True
             part_opts.transform_matrix = mat
+            part_opts.default_mcfs = self.include_mcfs
+            part_opts.num_uv_samples = 10 if self.use_uvnet_features else 0
+            logging.debug(f'loading transformed part {occ}')
             transformed_parts.append(pspy.Part(cached_part, part_opts))
 
         self.stats['num_normalized_parts_with_discrepancies'] = self._num_normalized_parts_with_discrepancies(transformed_parts)
@@ -202,6 +207,8 @@ class AssemblyInfo:
 
 
     def precompute_geometry(self):
+        if not self.include_mcfs:
+            raise ValueError
         if not self.computed_data_structures:
             #analyze mate connectors
             for tf,part in zip(self.part_transforms, self.parts):
@@ -261,7 +268,7 @@ class AssemblyInfo:
         self.precompute_geometry()
 
         if len(mate.matedEntities) != 2:
-            self.log('INCORRECT NUMBER OF MATED ENTITIES:',len(mate.matedEntities))
+            logging.warning('INCORRECT NUMBER OF MATED ENTITIES:',len(mate.matedEntities))
             raise ValueError
 
         
@@ -350,19 +357,21 @@ class AssemblyInfo:
         for npart, part in zip(norm_parts, self.parts):
             if get_num_topologies(npart) != get_num_topologies(part):
                 num_discrepancies += 1
-            elif len(npart.default_mcfs) != len(part.default_mcfs):
-                num_discrepancies += 1
             else:
-                mc_data = set()
-                for mc in part.default_mcfs:
-                    mc_dat = (mc.ref.axis_ref.reference_index, mc.ref.axis_ref.reference_type, mc.ref.origin_ref.reference_index, mc.ref.origin_ref.reference_type, mc.ref.origin_ref.inference_type.value)
-                    mc_data.add(mc_dat)
-                mc_data_normalized = set()
-                for mc in npart.default_mcfs:
-                    mc_dat = (mc.ref.axis_ref.reference_index, mc.ref.axis_ref.reference_type, mc.ref.origin_ref.reference_index, mc.ref.origin_ref.reference_type, mc.ref.origin_ref.inference_type.value)
-                    mc_data_normalized.add(mc_dat)
-                if mc_data != mc_data_normalized:
-                    num_discrepancies += 1
+                if self.include_mcfs:
+                    if len(npart.default_mcfs) != len(part.default_mcfs):
+                        num_discrepancies += 1
+                    else:
+                        mc_data = set()
+                        for mc in part.default_mcfs:
+                            mc_dat = (mc.ref.axis_ref.reference_index, mc.ref.axis_ref.reference_type, mc.ref.origin_ref.reference_index, mc.ref.origin_ref.reference_type, mc.ref.origin_ref.inference_type.value)
+                            mc_data.add(mc_dat)
+                        mc_data_normalized = set()
+                        for mc in npart.default_mcfs:
+                            mc_dat = (mc.ref.axis_ref.reference_index, mc.ref.axis_ref.reference_type, mc.ref.origin_ref.reference_index, mc.ref.origin_ref.reference_type, mc.ref.origin_ref.inference_type.value)
+                            mc_data_normalized.add(mc_dat)
+                        if mc_data != mc_data_normalized:
+                            num_discrepancies += 1
         return num_discrepancies
 
 
@@ -774,6 +783,8 @@ class AssemblyInfo:
 
     def create_batches(self):
         options = PartFeatures()
+        options.mcfs = self.include_mcfs
+        options.samples = self.use_uvnet_features
         datalist = [part_to_graph(part, options) for part in self.parts]
         return flatbatch(datalist)
 
@@ -803,14 +814,14 @@ class AssemblyInfo:
         # datalists.append(curr_datalist)
 
         #batches = [Batch.from_data_list(lst) for lst in datalists]
-        self.log('Creating initial graph data')
+        logging.info('Creating initial graph data')
         datalist = [BrepGraphData(part, uvnet_features=self.use_uvnet_features) for part in self.parts]
-        self.log('batching')
+        logging.info('batching')
         batch = Batch.from_data_list(datalist)
         
         #proposal indices are local to each part's mate connector set
         #get mate connector and its topological references, and offset them by the appropriate amount based on where they are in batch
-        self.log('finding proposals')
+        logging.info('finding proposals')
         part2offset = [0] * len(self.parts)
         offset = 0
         for i,part in enumerate(self.parts[:-1]):

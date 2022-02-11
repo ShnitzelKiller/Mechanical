@@ -25,13 +25,14 @@ def df_to_mates(mate_subset):
     return mates
 
 class AssemblyLoader:
-    def __init__(self, global_data, datapath='/projects/grail/benjones/cadlab', use_uvnet_features=False, epsilon_rel=0.001, max_topologies=5000, pair_data=False):
+    def __init__(self, global_data, datapath='/projects/grail/benjones/cadlab', use_uvnet_features=False, epsilon_rel=0.001, max_topologies=5000, pair_data=False, include_mcfs=True):
         self.global_data = global_data
         self.datapath = datapath
         self.use_uvnet_features = use_uvnet_features
         self.epsilon_rel = epsilon_rel
         self.max_topologies = max_topologies
         self.pair_data = pair_data
+        self.include_mcfs = include_mcfs
 
 
     def __call__(self, ind):
@@ -70,7 +71,7 @@ class AssemblyLoader:
         for i,occ in enumerate(occ_ids):
             occ_to_index[occ] = i
         data = Data(ind)
-        data.assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, print, epsilon_rel=self.epsilon_rel, use_uvnet_features=self.use_uvnet_features, max_topologies=self.max_topologies)
+        data.assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, epsilon_rel=self.epsilon_rel, use_uvnet_features=self.use_uvnet_features, max_topologies=self.max_topologies, include_mcfs=self.include_mcfs)
         if self.pair_data:
             pair_to_index = dict()
             mate_subset = self.global_data.mate_df.loc[[ind]]
