@@ -3,6 +3,7 @@ import igl
 import math
 from numba import jit, njit, vectorize
 import random
+import trimesh
 
 def voxel_points(axes):
     """generate n-dimensional grid coordinates from the given set of (x, y, z...) values"""
@@ -80,21 +81,28 @@ def sample_mesh_surface_points(mesh, n):
     return points, normals
 
 def sample_surface_points(V, F, n):
-    points = np.zeros([n, 3], np.float)
-    areas = np.zeros(F.shape[0], np.float)
-    trinormals = np.zeros([areas.shape[0], 3], np.float)
+    mesh = trimesh.Trimesh(V, F)
+    return trimesh.sample.sample_surface(mesh, n)
+
+def sample_surface_points_old(V, F, n, include_normals=True):
+    points = np.zeros((n, 3), V.dtype)
+    areas = np.zeros(F.shape[0], V.dtype)
+    if include_normals:
+        trinormals = np.zeros((areas.shape[0], 3), V.dtype)
     for i in range(F.shape[0]):
         base = V[F[i,0],:]
         v1 = V[F[i,1],:] - base
         v2 = V[F[i,2],:] - base
         normal = np.cross(v1, v2)
         area = math.sqrt(normal.dot(normal))
-        trinormals[i,:] = normal / area
+        if include_normals:
+            trinormals[i,:] = normal / area
         areas[i] = area
     total_area = np.sum(areas)
     areas /= total_area
     choices = [c for c in range(len(areas))]
-    normals = np.zeros([n, 3], np.float)
+    if include_normals:
+        normals = np.zeros((n, 3), V.dtype)
     for i in range(n):
         index = random.choices(choices, areas)[0]
         tri = F[index,:]
@@ -108,5 +116,17 @@ def sample_surface_points(V, F, n):
             u2 = 1-u1
         rp = base + u1 * v1 + u2 * v2
         points[i,:] = rp
-        normals[i,:] = trinormals[index,:]
-    return points, normals
+        if include_normals:
+            normals[i,:] = trinormals[index,:]
+    if include_normals:
+        return points, normals
+    else:
+        return points
+
+if __name__ == '__main__':
+    import igl
+    V, _, _, F, _, _ = igl.read_obj('testobj.obj')
+    points, indices = sample_surface_points(V, F, 100)
+    print(points.shape, indices.shape)
+    print(points.shape)
+
