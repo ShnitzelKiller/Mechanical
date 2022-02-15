@@ -3,11 +3,13 @@ import logging
 import os
 import sys
 import pandas as ps
-from mechanical.data import Dataset, BatchSaver, GlobalData
+from mechanical.data import Dataset, BatchSaver, GlobalData, DisplacementPenalty
 from enum import Enum
 from mechanical.utils import EnumAction
+import math
 class Mode(Enum):
     SAVE_BATCHES = "SAVE_BATCHES"
+    PENETRATION = "PENETRATION"
 
 parser = ArgumentParser()
 parser.add_argument('--index_file', nargs='+', default='/projects/grail/jamesn8/projects/mechanical/Mechanical/data/dataset/simple_valid_dataset.txt')
@@ -17,6 +19,11 @@ parser.add_argument('--stride',type=int, default=100)
 parser.add_argument('--start_index', type=int, default=0)
 parser.add_argument('--stop_index', type=int, default=-1)
 parser.add_argument('--mode', type=Mode, action=EnumAction, required=True)
+
+#penetration args:
+parser.add_argument('--sliding_distance',type=float, default=.01, help='distance as a fraction of assembly maxdim')
+parser.add_argument('--rotation_angle',type=float, default=math.pi/16)
+parser.add_argument('--num_samples',type=int, default=100)
 
 args = parser.parse_args()
 
@@ -43,6 +50,9 @@ def main():
         if not os.path.isdir(batchpath):
             os.mkdir(batchpath)
         action = BatchSaver(globaldata, batchpath, False, .001, 5000)
+    elif args.mode == Mode.PENETRATION:
+        meshpath = os.path.join(args.dataroot, 'mesh')
+        action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, meshpath)
     
     dataset.map_data(action)
 

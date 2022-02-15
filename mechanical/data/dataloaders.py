@@ -2,6 +2,9 @@ import os
 import pandas as ps
 import logging
 
+class Data:
+    def __init__(self, ind):
+        self.ind = ind
 
 class GlobalData:
     def __init__(self):
@@ -101,7 +104,8 @@ class Dataset:
         """
         for i,ind in enumerate(self.index[self.start_index:self.stop_index]):
             logging.info(f'processing {i+self.start_index}/{len(self.index)} ({ind})')
-            data = action.transforms(ind)
+            data = Data(ind)
+            data = action.transforms(data)
             results = action(data)
             if results is not None:
                 self.log_results(results)

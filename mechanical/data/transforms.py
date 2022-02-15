@@ -6,11 +6,8 @@ from mechanical.data import AssemblyInfo
 import logging
 import h5py
 from scipy.spatial.transform import Rotation as R
+import torch
 
-
-class Data:
-    def __init__(self, ind):
-        self.ind = ind
 
 def df_to_mates(mate_subset):
     mates = []
@@ -24,6 +21,16 @@ def df_to_mates(mate_subset):
         mates.append(mate)
     return mates
 
+class MeshLoader:
+    def __init__(self, meshpath):
+        self.meshpath = meshpath
+    
+    def __call__(self, data):
+        fname = f'{data.ind}.dat'
+        mesh_datapath = os.path.join(self.meshpath, fname)
+        data.meshes = torch.load(mesh_datapath)
+        return data
+
 class AssemblyLoader:
     def __init__(self, global_data, datapath='/projects/grail/benjones/cadlab', use_uvnet_features=False, epsilon_rel=0.001, max_topologies=5000, pair_data=False, include_mcfs=True):
         self.global_data = global_data
@@ -35,8 +42,8 @@ class AssemblyLoader:
         self.include_mcfs = include_mcfs
 
 
-    def __call__(self, ind):
-        part_subset = self.global_data.part_df.loc[ind]
+    def __call__(self, data):
+        part_subset = self.global_data.part_df.loc[data.ind]
 
         occ_ids = list(part_subset['PartOccurrenceID'])
         part_paths = []
@@ -45,13 +52,13 @@ class AssemblyLoader:
 
         #TEMPORARY: Load correct transforms, and also save them separately
         #if args.mode == 'generate':
-        with open(os.path.join(self.datapath, 'data/flattened_assemblies', self.global_data.assembly_df.loc[ind, "AssemblyPath"] + '.json')) as f:
+        with open(os.path.join(self.datapath, 'data/flattened_assemblies', self.global_data.assembly_df.loc[data.ind, "AssemblyPath"] + '.json')) as f:
             assembly_def = json.load(f)
         part_occs = assembly_def['part_occurrences']
         tf_dict = dict()
         for occ in part_occs:
             tf = np.array(occ['transform']).reshape(4, 4)
-            # npyname = f'/fast/jamesn8/assembly_data/transform64_cache/{ind}.npy'
+            # npyname = f'/fast/jamesn8/assembly_data/transform64_cache/{data.ind}.npy'
             # if not os.path.isfile(npyname):
             #     np.save(npyname, tf)
             tf_dict[occ['id']] = tf
@@ -70,11 +77,10 @@ class AssemblyLoader:
         occ_to_index = dict()
         for i,occ in enumerate(occ_ids):
             occ_to_index[occ] = i
-        data = Data(ind)
         data.assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, epsilon_rel=self.epsilon_rel, use_uvnet_features=self.use_uvnet_features, max_topologies=self.max_topologies, include_mcfs=self.include_mcfs)
         if self.pair_data:
             pair_to_index = dict()
-            mate_subset = self.global_data.mate_df.loc[[ind]]
+            mate_subset = self.global_data.mate_df.loc[[data.ind]]
             mates = df_to_mates(mate_subset)
             for m,mate in enumerate(mates):
                 part_indices = [occ_to_index[me[0]] for me in mate.matedEntities]
