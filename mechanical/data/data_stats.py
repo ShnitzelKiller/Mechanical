@@ -6,7 +6,8 @@ import numpy as np
 import torch
 from mechanical.utils import MateTypes
 from mechanical.geometry import displaced_min_signed_distance, min_signed_distance_symmetric
-
+#import meshplot as mp
+#mp.offline()
 class DataVisitor:
     def __call__(self, data):
         return self.process(data)
@@ -77,6 +78,9 @@ class DisplacementPenalty(DataVisitor):
                     pid2 = occ_to_index[mate_subset.iloc[j]['Part2']]
 
                     meshes_subset = [meshes[pid1], meshes[pid2]]
+                    #p = mp.plot(*meshes_subset[0])
+                    #p.add_mesh(*meshes_subset[1])
+                    #p.save("debugvis.html")
 
                     penalty_separation_sliding = 0
                     penalty_penetration_sliding = 0
@@ -87,15 +91,19 @@ class DisplacementPenalty(DataVisitor):
                     base_penetration = max(0, -base_penalty) / rel_distance
                     base_separation = max(0, base_penalty) / rel_distance
 
+                    tf = part_subset.iloc[pid1]['Transform']
+                    origin = tf[:3,:3] @ mate_subset.iloc[j]['Origin1'] + tf[:3,3]
+                    axis = tf[:3,:3] @ mate_subset.iloc[j]['Axes1'][:,2]
+
                     if sliding:
-                        penalty = displaced_min_signed_distance(meshes_subset, mate_subset.iloc[j]['Axes1'][:,2], samples=self.samples, displacement=rel_distance)
-                        penalty_neg = displaced_min_signed_distance(meshes_subset, mate_subset.iloc[j]['Axes1'][:,2], samples=self.samples, displacement=-rel_distance)
+                        penalty = displaced_min_signed_distance(meshes_subset, axis, samples=self.samples, displacement=rel_distance)
+                        penalty_neg = displaced_min_signed_distance(meshes_subset, axis, samples=self.samples, displacement=-rel_distance)
                         penalty_separation_sliding = max(0, max(penalty, penalty_neg) / rel_distance)
                         penalty_penetration_sliding = max(0, -min(penalty, penalty_neg) / rel_distance)
 
                     if rotating:
-                        penalty = displaced_min_signed_distance(meshes_subset, mate_subset.iloc[j]['Axes1'][:,2], origin=mate_subset.iloc[j]['Origin1'], motion_type='ROTATE', samples=self.samples, displacement=self.rotation_angle)
-                        penalty_neg = displaced_min_signed_distance(meshes_subset, mate_subset.iloc[j]['Axes1'][:,2], origin=mate_subset.iloc[j]['Origin1'], motion_type='ROTATE', samples=self.samples, displacement=-self.rotation_angle)
+                        penalty = displaced_min_signed_distance(meshes_subset, axis, origin=origin, motion_type='ROTATE', samples=self.samples, displacement=self.rotation_angle)
+                        penalty_neg = displaced_min_signed_distance(meshes_subset, axis, origin=origin, motion_type='ROTATE', samples=self.samples, displacement=-self.rotation_angle)
                         penalty_separation_rotating = max(0, max(penalty, penalty_neg) / rel_distance)
                         penalty_penetration_rotating = max(0, -min(penalty, penalty_neg) / rel_distance)
                     

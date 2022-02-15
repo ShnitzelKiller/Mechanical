@@ -21,7 +21,7 @@ parser.add_argument('--stop_index', type=int, default=-1)
 parser.add_argument('--mode', type=Mode, action=EnumAction, required=True)
 
 #penetration args:
-parser.add_argument('--sliding_distance',type=float, default=.01, help='distance as a fraction of assembly maxdim')
+parser.add_argument('--sliding_distance',type=float, default=.05, help='distance as a fraction of assembly maxdim')
 parser.add_argument('--rotation_angle',type=float, default=math.pi/16)
 parser.add_argument('--num_samples',type=int, default=100)
 

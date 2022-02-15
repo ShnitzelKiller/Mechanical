@@ -5,6 +5,8 @@ from intervaltree import IntervalTree, Interval
 import pspart
 from enum import Enum
 from argparse import Action
+import pandas as ps
+import os
 
 class EnumAction(Action):
     """
@@ -31,6 +33,17 @@ class EnumAction(Action):
         # Convert value back into an Enum
         value = self._enum(values)
         setattr(namespace, self.dest, value)
+
+def load_concatenated(stats_path, ext='.parquet', key=None, start='stats', drop_duplicates=True):
+    if key is None:
+        stats_df = ps.concat([ps.read_parquet(os.path.join(stats_path, fname)) for fname in os.listdir(stats_path) if fname.startswith(start) and fname.endswith(ext) and not fname.endswith('all' + ext)], axis=0)
+    else:
+        stats_df = ps.concat([ps.read_hdf(os.path.join(stats_path, fname), key) for fname in os.listdir(stats_path) if fname.startswith(start) and fname.endswith(ext) and not fname.endswith('all' + ext)], axis=0)
+    if drop_duplicates:
+        stats_df['tempindex'] = stats_df.index
+        stats_df.drop_duplicates(inplace=True)
+        stats_df.drop('tempindex', axis=1, inplace=True)
+    return stats_df
 
 def get_color(index, total):
     h = index / total * 360

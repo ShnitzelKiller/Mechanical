@@ -3,6 +3,10 @@ import json
 import igl
 from scipy.spatial.transform import Rotation as R
 from mechanical.geometry import sample_surface_points
+import numpy as np
+
+#import meshplot as mp
+#mp.offline()
 
 
 def min_signed_distance(meshes, samples=200):
@@ -33,6 +37,7 @@ def displaced_min_signed_distance(meshes, axis, origin=None, motion_type='SLIDE'
     specified axis.
     """
     meshes = sorted(meshes, key=lambda x: x[0].shape[0])
+    #p = mp.plot(*meshes[0])
     if motion_type == 'ROTATE':
         r = R.from_rotvec(axis * displacement)
         mat = r.as_matrix()
@@ -41,6 +46,11 @@ def displaced_min_signed_distance(meshes, axis, origin=None, motion_type='SLIDE'
         meshes[0] = (meshes[0][0] + axis * displacement, meshes[0][1])
     else:
         raise ValueError
+    #p.add_mesh(*meshes[0])
+    #p.add_mesh(*meshes[1])
+    #if motion_type == 'ROTATE':
+    #    p.add_points(origin[np.newaxis,:])
+    #p.save(f'debugvis_{motion_type}.html')
     
     return min_signed_distance_symmetric(meshes, samples=samples)
 
