@@ -82,10 +82,10 @@ class DisplacementPenalty(DataVisitor):
                     #p.add_mesh(*meshes_subset[1])
                     #p.save("debugvis.html")
 
-                    penalty_separation_sliding = 0
-                    penalty_penetration_sliding = 0
-                    penalty_separation_rotating = 0
-                    penalty_penetration_rotating = 0
+                    penalties_separation_sliding = [0,0]
+                    penalties_penetration_sliding = [0,0]
+                    penalties_separation_rotating = [0,0]
+                    penalties_penetration_rotating = [0,0]
 
                     base_penalty = min_signed_distance_symmetric(meshes_subset, samples=self.samples)
                     base_penetration = max(0, -base_penalty) / rel_distance
@@ -96,24 +96,29 @@ class DisplacementPenalty(DataVisitor):
                     axis = tf[:3,:3] @ mate_subset.iloc[j]['Axes1'][:,2]
 
                     if sliding:
-                        penalty = displaced_min_signed_distance(meshes_subset, axis, samples=self.samples, displacement=rel_distance)
-                        penalty_neg = displaced_min_signed_distance(meshes_subset, axis, samples=self.samples, displacement=-rel_distance)
-                        penalty_separation_sliding = max(0, max(penalty, penalty_neg) / rel_distance)
-                        penalty_penetration_sliding = max(0, -min(penalty, penalty_neg) / rel_distance)
-
+                        for k,displacement in enumerate([rel_distance, -rel_distance]):
+                            sd = displaced_min_signed_distance(meshes_subset, axis, samples=self.samples, displacement=displacement)
+                            penalties_penetration_sliding[k] = max(0, -sd) / rel_distance
+                            penalties_separation_sliding[k] = max(0, sd) / rel_distance
                     if rotating:
-                        penalty = displaced_min_signed_distance(meshes_subset, axis, origin=origin, motion_type='ROTATE', samples=self.samples, displacement=self.rotation_angle)
-                        penalty_neg = displaced_min_signed_distance(meshes_subset, axis, origin=origin, motion_type='ROTATE', samples=self.samples, displacement=-self.rotation_angle)
-                        penalty_separation_rotating = max(0, max(penalty, penalty_neg) / rel_distance)
-                        penalty_penetration_rotating = max(0, -min(penalty, penalty_neg) / rel_distance)
-                    
-                    stats.append({'Assembly': data.ind, 'type': mtype,
+                        for k, angle in enumerate([self.rotation_angle, -self.rotation_angle]):
+                            sd = displaced_min_signed_distance(meshes_subset, axis, origin=origin, motion_type='ROTATE', samples=self.samples, displacement=angle)
+                            penalties_penetration_rotating[k] = max(0, -sd) / rel_distance
+                            penalties_separation_rotating[k] = max(0, sd) / rel_distance
+
+                    row = {'Assembly': data.ind, 'type': mtype,
                                     'base_penetration': base_penetration,
-                                    'base_separation': base_separation,
-                                    'penalty_separation_sliding': penalty_separation_sliding,
-                                    'penetration_sliding': penalty_penetration_sliding,
-                                    'separation_rotating': penalty_separation_rotating,
-                                    'penetration_rotating': penalty_penetration_rotating,
-                                    'penetration_total': max(base_penetration, max(penalty_penetration_rotating, penalty_penetration_sliding)),
-                                    'separation_total': max(base_separation, max(penalty_separation_rotating, penalty_separation_sliding))}, index=mate_subset.iloc[j]['MateIndex'])
+                                    'base_separation': base_separation}
+
+                    for k in range(2):
+                        row[f'penalty_separation_sliding_{k}'] = penalties_separation_sliding[k]
+                        row[f'penalty_penetration_sliding_{k}'] = penalties_penetration_sliding[k]
+                        row[f'penalty_separation_rotating_{k}'] = penalties_separation_rotating[k]
+                        row[f'penalty_penetration_rotating_{k}'] = penalties_penetration_rotating[k]
+                        row[f'max_penalty_sliding_{k}'] = max(base_penalty, max(penalties_separation_sliding[k], penalties_penetration_sliding[k]))
+                        row[f'max_penalty_rotating_{k}'] = max(base_penalty, max(penalties_separation_rotating[k], penalties_penetration_rotating[k]))
+                    row[f'min_penalty_sliding'] = min(row[f'max_penalty_sliding_{k}'] for k in range(2))
+                    row[f'min_penalty_rotating'] = min(row[f'max_penalty_rotating_{k}'] for k in range(2))
+
+                    stats.append(row, index=mate_subset.iloc[j]['MateIndex'])
         return {'mate_penetration_stats': stats}
