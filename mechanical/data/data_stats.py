@@ -26,7 +26,7 @@ class BatchSaver(DataVisitor):
 
     def process(self, data):
         out_dict = {}
-        stat = Stats()
+        stat = Stats(defaults={'invalid_bbox': False})
         stat.append(data.assembly_info.stats, data.ind)
         out_dict['assembly_stats'] = stat
         batch = data.assembly_info.create_batches()

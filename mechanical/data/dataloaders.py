@@ -41,12 +41,13 @@ class GlobalData:
 
 
 class Stats:
-    def __init__(self, format='parquet', key=None):
+    def __init__(self, format='parquet', key=None, defaults={}):
         self.rows = []
         self.indices = []
         self.checkpoint = 0
         self.format = format
         self.key = key
+        self.defaults = defaults
     
     def append(self, row, index=None):
         self.rows.append(row)
@@ -58,6 +59,8 @@ class Stats:
             self.checkpoint = 0
         if len(self.rows) - self.checkpoint > 0:
             df = ps.DataFrame(self.rows[self.checkpoint:], index=self.indices[self.checkpoint:] if self.indices else None)
+            for key in self.defaults:
+                df[key].fillna(self.defaults[key], inplace=True)
             if incremental:
                 self.checkpoint = len(self.rows)
             return df
