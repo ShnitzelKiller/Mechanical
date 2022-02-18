@@ -1,3 +1,4 @@
+from xml.etree.ElementInclude import include
 from mechanical.data import AssemblyLoader, Stats, MeshLoader
 import logging
 import os
@@ -6,6 +7,7 @@ import numpy as np
 import torch
 from mechanical.utils import MateTypes
 from mechanical.geometry import displaced_min_signed_distance, min_signed_distance_symmetric
+from mechanical.utils import joinmeshes
 #import meshplot as mp
 #mp.offline()
 class DataVisitor:
@@ -36,19 +38,21 @@ class BatchSaver(DataVisitor):
 
 
 class DisplacementPenalty(DataVisitor):
-    def __init__(self, global_data, sliding_distance, rotation_angle, num_samples, meshpath):
+    def __init__(self, global_data, sliding_distance, rotation_angle, num_samples, include_vertices, meshpath):
         self.transforms = MeshLoader(meshpath)
         self.global_data = global_data
         self.sliding_distance = sliding_distance
         self.rotation_angle = rotation_angle
         self.samples = num_samples
+        self.include_vertices = include_vertices
     
     def process(self, data):
         stats = Stats()
         part_subset = self.global_data.part_df.loc[[data.ind]]
         mate_subset = self.global_data.mate_df.loc[[data.ind]]
-        if part_subset.shape[0] == len(data.meshes):
+        rigidcomps = list(part_subset['RigidComponentID'])
 
+        if part_subset.shape[0] == len(data.meshes):
             occ_ids = list(part_subset['PartOccurrenceID'])
             occ_to_index = dict()
             for i,occ in enumerate(occ_ids):
@@ -77,7 +81,9 @@ class DisplacementPenalty(DataVisitor):
                     pid1 = occ_to_index[mate_subset.iloc[j]['Part1']]
                     pid2 = occ_to_index[mate_subset.iloc[j]['Part2']]
 
-                    meshes_subset = [meshes[pid1], meshes[pid2]]
+                    meshes_subset = [joinmeshes([mesh for k,mesh in enumerate(meshes) if rigidcomps[k] == rigidcomps[pid]]) for pid in [pid1, pid2]]
+                    #meshes_subset = [meshes[pid1], meshes[pid2]]
+
                     #p = mp.plot(*meshes_subset[0])
                     #p.add_mesh(*meshes_subset[1])
                     #p.save("debugvis.html")
@@ -87,7 +93,7 @@ class DisplacementPenalty(DataVisitor):
                     penalties_separation_rotating = [0,0]
                     penalties_penetration_rotating = [0,0]
 
-                    base_penalty = min_signed_distance_symmetric(meshes_subset, samples=self.samples)
+                    base_penalty = min_signed_distance_symmetric(meshes_subset, samples=self.samples, include_vertices = self.include_vertices)
                     base_penetration = max(0, -base_penalty) / rel_distance
                     base_separation = max(0, base_penalty) / rel_distance
 
@@ -97,12 +103,12 @@ class DisplacementPenalty(DataVisitor):
 
                     if sliding:
                         for k,displacement in enumerate([rel_distance, -rel_distance]):
-                            sd = displaced_min_signed_distance(meshes_subset, axis, samples=self.samples, displacement=displacement)
+                            sd = displaced_min_signed_distance(meshes_subset, axis, samples=self.samples, displacement=displacement, include_vertices=self.include_vertices)
                             penalties_penetration_sliding[k] = max(0, -sd) / rel_distance
                             penalties_separation_sliding[k] = max(0, sd) / rel_distance
                     if rotating:
                         for k, angle in enumerate([self.rotation_angle, -self.rotation_angle]):
-                            sd = displaced_min_signed_distance(meshes_subset, axis, origin=origin, motion_type='ROTATE', samples=self.samples, displacement=angle)
+                            sd = displaced_min_signed_distance(meshes_subset, axis, origin=origin, motion_type='ROTATE', samples=self.samples, displacement=angle, include_vertices=self.include_vertices)
                             penalties_penetration_rotating[k] = max(0, -sd) / rel_distance
                             penalties_separation_rotating[k] = max(0, sd) / rel_distance
 

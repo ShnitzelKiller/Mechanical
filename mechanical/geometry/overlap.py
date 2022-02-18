@@ -9,15 +9,17 @@ import numpy as np
 #mp.offline()
 
 
-def min_signed_distance(meshes, samples=200):
+def min_signed_distance(meshes, samples=200, include_vertices=False):
     points, indices = sample_surface_points(meshes[0][0], meshes[0][1], samples)
+    if include_vertices:
+        points = np.vstack([points, meshes[0][0]])
     S, I, C = igl.signed_distance(points, meshes[1][0], meshes[1][1])
     return S.min()
 
 
 
-def min_signed_distance_symmetric(meshes, samples=200):
-    return min(min_signed_distance(meshes, samples=samples), min_signed_distance(list(reversed(meshes)), samples=samples))
+def min_signed_distance_symmetric(meshes, samples=200, include_vertices=False):
+    return min(min_signed_distance(meshes, samples=samples, include_vertices=include_vertices), min_signed_distance(list(reversed(meshes)), samples=samples, include_vertices=include_vertices))
 
 
 
@@ -31,7 +33,7 @@ def mesh_overlap_volume(meshes, axis, quality=100):
     return intersection, smallest
 
 
-def displaced_min_signed_distance(meshes, axis, origin=None, motion_type='SLIDE', samples=100, displacement=0.01):
+def displaced_min_signed_distance(meshes, axis, origin=None, motion_type='SLIDE', samples=100, displacement=0.01, include_vertices=False):
     """
     compute the amount of overlap between meshes after motion of type [ROTATE|SLIDE] is applied along the
     specified axis.
@@ -52,7 +54,7 @@ def displaced_min_signed_distance(meshes, axis, origin=None, motion_type='SLIDE'
     #    p.add_points(origin[np.newaxis,:])
     #p.save(f'debugvis_{motion_type}.html')
     
-    return min_signed_distance_symmetric(meshes, samples=samples)
+    return min_signed_distance_symmetric(meshes, samples=samples, include_vertices=include_vertices)
 
 
 if __name__ == '__main__':

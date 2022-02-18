@@ -261,12 +261,15 @@ def inter_group_matches(group_sizes, points, dim, eps, hash=None, point_to_group
     return proposals
 
 def joinmeshes(meshes):
-    F = []
-    offset = 0
-    for i in range(len(meshes)):
-        F.append(meshes[i][1] + offset)
-        offset += meshes[i][0].shape[0]
-    return np.vstack([v for v,f in meshes]), np.vstack(F)
+    if len(meshes) > 1:
+        F = []
+        offset = 0
+        for i in range(len(meshes)):
+            F.append(meshes[i][1] + offset)
+            offset += meshes[i][0].shape[0]
+        return np.vstack([v for v,f in meshes]), np.vstack(F)
+    else:
+        return meshes[0]
 
 def adjacency_matrix(occs, mates):
     adj = np.zeros([len(occs), len(occs)], dtype=np.int32)

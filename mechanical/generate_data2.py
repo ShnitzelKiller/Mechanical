@@ -19,11 +19,13 @@ parser.add_argument('--stride',type=int, default=100)
 parser.add_argument('--start_index', type=int, default=0)
 parser.add_argument('--stop_index', type=int, default=-1)
 parser.add_argument('--mode', type=Mode, action=EnumAction, required=True)
+parser.add_argument('--resume',action='store_true')
 
 #penetration args:
 parser.add_argument('--sliding_distance',type=float, default=.05, help='distance as a fraction of assembly maxdim')
 parser.add_argument('--rotation_angle',type=float, default=math.pi/16)
 parser.add_argument('--num_samples',type=int, default=100)
+parser.add_argument('--include_vertices', action='store_true')
 
 args = parser.parse_args()
 
@@ -42,6 +44,8 @@ def main():
         handlers=handlers
     )
 
+    logging.info(f'args: {args}')
+
     dataset = Dataset(args.index_file, args.stride, statspath, args.start_index, args.stop_index)
     globaldata = GlobalData()
 
@@ -52,7 +56,7 @@ def main():
         action = BatchSaver(globaldata, batchpath, False, .001, 5000)
     elif args.mode == Mode.PENETRATION:
         meshpath = os.path.join(args.dataroot, 'mesh')
-        action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, meshpath)
+        action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, args.include_vertices, meshpath)
     
     dataset.map_data(action)
 
