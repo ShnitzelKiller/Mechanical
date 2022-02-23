@@ -166,22 +166,22 @@ class MCDataSaver(DataVisitor):
             dir_groups = f.create_group('dir_clusters')
             for c in dir_data:
                 dir = dir_groups.create_group(str(c))
-                dir.create_dataset('indices', data=np.array(dir_data[c][0]))
+                dir.create_dataset('indices', data=np.array(dir_data[c][0], dtype=np.int32))
                 ax = dir.create_group('axial_clusters')
                 for c2 in all_axis_clusters[c]:
-                    ax.create_dataset(str(c2), data=np.array(all_axis_clusters[c][c2]))
+                    ax.create_dataset(str(c2), data=np.array(all_axis_clusters[c][c2], dtype=np.int32))
             pairdata = f.create_group('pair_data') #here, indices mean the UNIQUE representative indices for retrieving each axis from the mc data
             for pair in pairs_to_dir_clusters:
                 key = f'{pair[0]},{pair[1]}'
                 pair_group = pairdata.create_group(key)
                 dirgroup = pair_group.create_group('dirs')
                 #dirgroup.create_dataset('values', data = np.array(pairs_to_dirs[pair]))
-                dirgroup.create_dataset('indices', data = np.array(list(pairs_to_dir_clusters[pair])))
+                dirgroup.create_dataset('indices', data = np.array(list(pairs_to_dir_clusters[pair]), dtype=np.int32))
                 ax_group = pair_group.create_group('axes')
                 if pair in pairs_to_axes:
                     for dir_ind in pairs_to_axes[pair]:
                         ax_cluster = ax_group.create_group(str(dir_ind))
                         #ax_cluster.create_dataset('values', data = np.array(origins))
-                        ax_cluster.create_dataset('indices', data = np.array(pairs_to_axes[pair][dir_ind]))
+                        ax_cluster.create_dataset('indices', data = np.array(pairs_to_axes[pair][dir_ind], dtype=np.int32))
 
         return {'mc_stats': stats}
