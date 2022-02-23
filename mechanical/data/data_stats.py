@@ -31,9 +31,10 @@ class BatchSaver(DataVisitor):
         stat = Stats(defaults={'invalid_bbox': False})
         stat.append(data.assembly_info.stats, data.ind)
         out_dict['assembly_stats'] = stat
-        batch = data.assembly_info.create_batches()
-        torch_datapath = os.path.join(self.out_path, f'{data.ind}.dat')
-        torch.save(batch, torch_datapath)
+        if data.assembly_info.stats['initialized'] and data.assembly_info.stats['num_invalid_loaded_parts'] == 0:
+            batch = data.assembly_info.create_batches()
+            torch_datapath = os.path.join(self.out_path, f'{data.ind}.dat')
+            torch.save(batch, torch_datapath)
         return out_dict
 
 
@@ -128,3 +129,59 @@ class DisplacementPenalty(DataVisitor):
 
                     stats.append(row, index=mate_subset.iloc[j]['MateIndex'])
         return {'mate_penetration_stats': stats}
+
+class MCDataSaver(DataVisitor):
+    def __init__(self, global_data, mc_path, max_axis_groups, epsilon_rel, max_topologies, save_frames=False):
+        self.transforms = AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies)
+        self.max_groups = max_axis_groups
+        self.mc_path = mc_path
+        self.save_frames = save_frames
+    
+    def process(self, data):
+        stats = Stats()
+        assembly_info = data.assembly_info
+        pairs_to_axes, all_axis_clusters, pairs_to_dir_clusters, dir_data, mc_part_labels = assembly_info.axis_proposals(max_z_groups=self.max_groups)
+        for pair in pairs_to_axes:
+            for dir_ind in pairs_to_axes[pair]:
+                for ax in pairs_to_axes[pair][dir_ind]:
+                    filtered_clusters = [[a for a in all_axis_clusters[dir_ind][ax] if mc_part_labels[a] == part] for part in pair]
+                    stats.append({'dir_ind': dir_ind, 'axis_id': ax,
+                                'part1': pair[0], 'part2': pair[1],
+                                'part1_occ': assembly_info.occ_ids[pair[0]], 'part2_occ': assembly_info.occ_ids[pair[1]],
+                                'num_MCs_1': len(filtered_clusters[0]), 'num_MCs_2': len(filtered_clusters[1]),
+                                'assembly': data.ind})
+        
+
+        with h5py.File(os.path.join(self.mc_path, f"{data.ind}.hdf5"), "w") as f:
+            f.create_dataset('mc_part_labels', data=mc_part_labels)
+
+            if self.save_frames:
+                mc_frames = f.create_group('mc_frames')
+                for k in range(len(assembly_info.mc_origins_all)):
+                    partgroup = mc_frames.create_group(str(k))
+                    partgroup.create_dataset('origins', data=np.array(assembly_info.mc_origins_all[k]))
+                    #rots_quat = np.array([R.from_matrix(rot).as_quat() for rot in assembly_info.mc_rots_all[k]])
+                    #partgroup.create_dataset('rots', data=rots_quat)
+
+            dir_groups = f.create_group('dir_clusters')
+            for c in dir_data:
+                dir = dir_groups.create_group(str(c))
+                dir.create_dataset('indices', data=np.array(dir_data[c][0]))
+                ax = dir.create_group('axial_clusters')
+                for c2 in all_axis_clusters[c]:
+                    ax.create_dataset(str(c2), data=np.array(all_axis_clusters[c][c2]))
+            pairdata = f.create_group('pair_data') #here, indices mean the UNIQUE representative indices for retrieving each axis from the mc data
+            for pair in pairs_to_dir_clusters:
+                key = f'{pair[0]},{pair[1]}'
+                pair_group = pairdata.create_group(key)
+                dirgroup = pair_group.create_group('dirs')
+                #dirgroup.create_dataset('values', data = np.array(pairs_to_dirs[pair]))
+                dirgroup.create_dataset('indices', data = np.array(list(pairs_to_dir_clusters[pair])))
+                ax_group = pair_group.create_group('axes')
+                if pair in pairs_to_axes:
+                    for dir_ind in pairs_to_axes[pair]:
+                        ax_cluster = ax_group.create_group(str(dir_ind))
+                        #ax_cluster.create_dataset('values', data = np.array(origins))
+                        ax_cluster.create_dataset('indices', data = np.array(pairs_to_axes[pair][dir_ind]))
+
+        return {'mc_stats': stats}

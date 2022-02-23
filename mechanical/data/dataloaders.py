@@ -1,6 +1,7 @@
 import os
 import pandas as ps
 import logging
+import random
 
 class Data:
     def __init__(self, ind):
@@ -74,9 +75,15 @@ class Stats:
             if incremental:
                 path = path + f'_{ind}'
             if self.format == 'parquet':
-                df.to_parquet(path + '.parquet')
+                fname = path + '.parquet'
+                if os.path.isfile(fname):
+                    fname = path + f'_{random.randint(0,1000000)}' + '.parquet'
+                df.to_parquet(fname)
             elif self.format == 'hdf':
-                df.to_hdf(path + '.h5', self.key)
+                fname = path + '.hdf'
+                if os.path.isfile(fname):
+                    fname = path + f'_{random.randint(0,1000000)}' + '.h5'
+                df.to_hdf(fname, self.key)
     
     def combine(self, other):
         self.rows += other.rows

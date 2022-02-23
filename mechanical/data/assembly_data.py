@@ -8,7 +8,7 @@ import torch
 #from torch_geometric.data import Batch
 from pspart import NNHash
 import pspy
-from mechanical.utils import find_neighbors, inter_group_matches, cluster_points, homogenize_frame, external_adjacency_list_from_brepdata, MateTypes
+from mechanical.utils import find_neighbors, inter_group_matches, cluster_points, homogenize_frame, external_adjacency_list_from_brepdata, MateTypes, compute_basis
 from scipy.spatial.transform import Rotation as R
 from automate import PartFeatures, part_to_graph, flatbatch
 import torch_scatter
@@ -103,12 +103,15 @@ class AssemblyInfo:
         self.part_caches = []
         self.occ_transforms = []
         self.occ_ids = []
+
         self.mc_origins_all = []
-        self.mc_rots_all = [] #3x3 matrices
-        self.mc_rots_homogenized_all = []
-        self.mco_hashes = [] #spatial hashes of origins
-        self.mcz_hashes = [] #spatial hashes of homogenized z direction
-        self.mcr_hashes = [] #spatial hashes of origin + homogenized z dir
+        self.mc_axes_all = []
+        self.mc_axes_homogenized_all = []
+
+        #self.mco_hashes = [] #spatial hashes of origins
+        #self.mcz_hashes = [] #spatial hashes of homogenized z direction
+        #self.mcr_hashes = [] #spatial hashes of origin + homogenized z dir
+
         self.computed_data_structures = False
         part_opts = pspy.PartOptions()
         part_opts.default_mcfs = include_mcfs
@@ -214,31 +217,28 @@ class AssemblyInfo:
             for tf,part in zip(self.part_transforms, self.parts):
                 assert(part.is_valid)
                 mc_origins = []
-                mc_rots = []
+                mc_axes = []
                 for mc in part.default_mcfs:
-                    cs = mc.get_coordinate_system()
-                    cs_transformed = tf @ cs
-                    origin, rot = cs_to_origin_frame(cs_transformed)
-                    mc_origins.append(origin)
-                    mc_rots.append(rot)
+                    mc_origins.append(apply_transform(tf, mc.origin, is_points=True))
+                    mc_axes.append(apply_transform(tf, mc.axis, is_points=False))
 
-                self.mc_rots_all.append(mc_rots)
+                self.mc_axes_all.append(mc_axes)
                 self.mc_origins_all.append(mc_origins)
-                mc_rots_homogenized = [homogenize_frame(rot, z_flip_only=True) for rot in mc_rots]
-                self.mc_rots_homogenized_all.append(mc_rots_homogenized)
+                mc_axes_homogenized = [homogenize_sign(vec)[0] for vec in mc_axes]
+                self.mc_axes_homogenized_all.append(mc_axes_homogenized)
 
-                mc_rays = [np.concatenate([origin,rot[:,2]]) for origin, rot in zip(mc_origins, mc_rots_homogenized)]
-                origin_hash = NNHash(mc_origins, 3, self.epsilon_rel)
-                z_hash = NNHash([rot[:,2] for rot in mc_rots_homogenized], 3, self.epsilon_rel)
-                ray_hash = NNHash(mc_rays, 6, self.epsilon_rel)
-                self.mco_hashes.append(origin_hash)
-                self.mcz_hashes.append(z_hash)
-                self.mcr_hashes.append(ray_hash)
+                #mc_rays = [np.concatenate([origin,axis]) for origin, axis in zip(mc_origins, mc_axes_homogenized)]
+                #origin_hash = NNHash(mc_origins, 3, self.epsilon_rel)
+                #z_hash = NNHash([axis for axis in mc_axes_homogenized], 3, self.epsilon_rel)
+                #ray_hash = NNHash(mc_rays, 6, self.epsilon_rel)
+                #self.mco_hashes.append(origin_hash)
+                #self.mcz_hashes.append(z_hash)
+                #self.mcr_hashes.append(ray_hash)
             self.computed_data_structures = True
             list_of_lists = [self.parts, self.part_paths, self.part_caches, \
                             self.occ_transforms, self.occ_to_index, self.occ_ids, self.mc_origins_all, \
-                            self.mc_rots_all, self.mc_rots_homogenized_all, \
-                            self.mco_hashes, self.mcz_hashes, self.mcr_hashes, \
+                            self.mc_axes_all, self.mc_axes_homogenized_all, \
+                            #self.mco_hashes, self.mcz_hashes, self.mcr_hashes, \
                             self.mate_transforms, self.part_transforms]
             try:
                 assert(all(len(x)==len(self.parts) for x in list_of_lists))
@@ -407,9 +407,76 @@ class AssemblyInfo:
                     proposal[part_pair].update(new_mc_pairs_dict)
                     
         return proposal
+    
+
+    def mc_clusters(self, max_z_groups=10):
+        """
+        Compute clusters of MCs that have the same direction (and span at least 2 parts), and return
+        dir_data: a dict from a cluster index -> (indices of other MCs in each cluster, and their origins projected to the plane with that direction normal)
+        mc_part_labels: integer part labels of each mc in the assembly
+        """
+
+        self.precompute_geometry()
+        mc_part_labels = [i for i,l in enumerate(self.mc_origins_all) for x in l]
+
+        flattened_origins = [origin for mc_origins in self.mc_origins_all for origin in mc_origins]
+        flattened_axes = [axis for mc_axes in self.mc_axes_homogenized_all for axis in mc_axes]
+        flattened_rots = [compute_basis(axis) for axis in flattened_axes]
+
+        axis_hash = NNHash(flattened_axes, 3, self.epsilon_rel)
+        pairs_to_clusters, dir_clusters = inter_group_cluster_points(axis_hash, flattened_axes, mc_part_labels)
+        group_indices = list(dir_clusters)
+        group_indices.sort(key=lambda k: len(dir_clusters[k]), reverse=True)
+        #dir_to_projected_origins = {}
+        #dir_to_same_dir_inds = {}
+        dir_data = {}
+
+        for ind in group_indices[:max_z_groups]:
+            same_dir_inds = list(dir_clusters[ind])
+            xy_plane = flattened_rots[ind].T
+            proj_dir = flattened_axes[ind]
+            subset_stacked = np.array([flattened_origins[i] for i in same_dir_inds])
+            projected_origins = subset_stacked @ xy_plane
+            projected_z = subset_stacked @ proj_dir
+            dir_data[ind] = (same_dir_inds, projected_origins, projected_z)
+        
+        return pairs_to_clusters, dir_data, mc_part_labels
 
 
-    def mate_proposals(self, max_z_groups=10, coincident_only=False, axes_only=False):
+    def axis_proposals(self, max_z_groups=10):
+        """
+        return:
+        pairs_to_axes: pair -> (MC dir cluster index -> [indices of axis clusters in all_clusters[dir]])
+        all_axis_clusters: MC dir cluster index -> (MC axis cluster index -> same axis indices)
+        pairs_to_dir_clusters: pair -> MC dir cluster index
+        dir_data: MC dir cluster index -> ([same dir inds], [projected origins])
+        mc_part_labels: MC index -> part label
+        """
+
+
+        pairs_to_dir_clusters, dir_data, mc_part_labels = self.mc_clusters(max_z_groups=max_z_groups)
+        
+        pairs_to_axes = {} #dictionary from pairs of parts to a dictionary from an axis direction MC to indices of origin MCs that are unique w.r.t. the rays they define with the axis
+        all_axis_clusters = {} #dictionary from direction group indices to all clusters of projected points, as MC indices
+
+        for ind in dir_data:
+            same_dir_inds, projected_origins, _ = dir_data[ind]
+            same_dir_mc_part_labels = [mc_part_labels[k] for k in same_dir_inds]
+            projected_hash = NNHash(projected_origins, 2, self.epsilon_rel)
+            pairs_to_projected_clusters, clusters_to_point_ids = inter_group_cluster_points(projected_hash, projected_origins, same_dir_mc_part_labels)
+            #convert to global indices
+            all_axis_clusters[ind] = {same_dir_inds[c] : [same_dir_inds[k] for k in clusters_to_point_ids[c]] for c in clusters_to_point_ids}
+            for pair in pairs_to_projected_clusters:
+                if pair not in pairs_to_axes:
+                    pairs_to_axes[pair] = {}
+                pairs_to_axes[pair][ind] = [same_dir_inds[c] for c in pairs_to_projected_clusters[pair]]
+                for k in pairs_to_axes[pair][ind]: #remove
+                    assert(k in all_axis_clusters[ind])
+        
+        return pairs_to_axes, all_axis_clusters, pairs_to_dir_clusters, dir_data, mc_part_labels
+    
+
+    def mate_proposals(self, max_z_groups=10, coincident_only=False):
         """
         Find probable mate locations
         `max_z_groups`: maximum number of clusters of mate connector z directions to consider as possible axes
@@ -422,75 +489,38 @@ class AssemblyInfo:
         and dist is the euclidian distance between the mate connector origins.
 
         """
-        self.precompute_geometry()
-        mc_counts = [len(mcos) for mcos in self.mc_origins_all]
-        mc_part_labels = [i for i,l in enumerate(self.mc_origins_all) for x in l]
+
+        pairs_to_clusters, dir_data, mc_part_labels = self.mc_clusters(max_z_groups=max_z_groups)
         
-        #offset2part = sizes_to_interval_tree(mc_counts)
-        #part2offset = [0] + mc_counts[:-1]
+        mc_counts = [len(mcos) for mcos in self.mc_origins_all]
 
         flattened_origins = [origin for mc_origins in self.mc_origins_all for origin in mc_origins]
-        flattened_rots = [rot for mc_rots in self.mc_rots_homogenized_all for rot in mc_rots]
-        mc_axis = [rot[:,2] for rot in flattened_rots]
-        mc_ray = [np.concatenate([origin, axis]) for origin, axis in zip(flattened_origins, mc_axis)]
-        mc_quat = [R.from_matrix(rot).as_quat() for rot in flattened_rots]
+        flattened_axes = [axis for mc_axes in self.mc_axes_homogenized_all for axis in mc_axes]
+        mc_ray = [np.concatenate([origin, axis]) for origin, axis in zip(flattened_origins, flattened_axes)]
 
-        if not axes_only:
-            matches = inter_group_matches(mc_counts, mc_ray, 6, self.epsilon_rel)
-            coincident_proposals = self._matches_to_proposals(matches, 1)
-        else:
-            axes = {} #dictionary from pairs of parts to a dictionary from an axis direction MC to indices of origin MCs that are unique w.r.t. the rays they define with the axis
-            all_clusters = {} #dictionary from direction group indices to all clusters of projected points, as MC indices
+        matches = inter_group_matches(mc_counts, mc_ray, 6, self.epsilon_rel)
+        coincident_proposals = self._matches_to_proposals(matches, 1)
+        
         if coincident_only:
             return coincident_proposals
+        
+        flattened_rots = [compute_basis(axis) for axis in flattened_axes]
 
         all_axial_proposals = []
         all_planar_proposals = []
 
-        #for each axial cluster, find nearest neighbors of projected set of frames with the same axis direction
-        axis_hash = NNHash(mc_axis, 3, self.epsilon_rel)
-        clusters = cluster_points(axis_hash, mc_axis)
-        group_indices = list(clusters)
-        group_indices.sort(key=lambda k: len(clusters[k]), reverse=True)
-        for ind in group_indices[:max_z_groups]:
-            # print('processing group',ind,':',result[ind])
-            proj_dir = mc_axis[ind]
-            same_dir_inds = list(axis_hash.get_nearest_points(proj_dir))
+        for ind in dir_data:
+            same_dir_inds, projected_origins, projected_z = dir_data[ind]
             index_map = lambda x: same_dir_inds[x]
-            xy_plane = flattened_rots[ind][:,:2]
-            # print('projecting to find axes')
-            subset_stacked = np.array([flattened_origins[i] for i in same_dir_inds])
-            projected_origins = list(subset_stacked @ xy_plane)
-            if axes_only:
-                same_dir_labels = [mc_part_labels[k] for k in same_dir_inds]
-                projected_hash = NNHash(projected_origins, 2, self.epsilon_rel)
-                projected_clusters, clusters_to_point_ids = inter_group_cluster_points(projected_hash, projected_origins, same_dir_labels)
-                all_clusters[ind] = {same_dir_inds[c] : [same_dir_inds[k] for k in clusters_to_point_ids[c]] for c in clusters_to_point_ids}
-                for pair in projected_clusters:
-                    if pair not in axes:
-                        axes[pair] = {}
-                    axes[pair][ind] = [same_dir_inds[c] for c in projected_clusters[pair]]
-                    for k in axes[pair][ind]: #remove
-                        assert(k in all_clusters[ind])
-            else:
-                axial_matches = inter_group_matches(mc_counts, projected_origins, 2, self.epsilon_rel, point_to_grouped_map=index_map)
-                axial_proposals = self._matches_to_proposals(axial_matches, 2)
-                all_axial_proposals.append(axial_proposals)
-                
-                # print('projecting to find planes')
-                projected_z = list(subset_stacked @ proj_dir)
-                z_quat = [np.concatenate([mc_quat[same_dir_ind], [z_dist]]) for same_dir_ind, z_dist in zip(same_dir_inds, projected_z)]
-                planar_matches = inter_group_matches(mc_counts, z_quat, 5, self.epsilon_rel, point_to_grouped_map=index_map)
-                planar_proposals = self._matches_to_proposals(planar_matches, 3)
-                all_planar_proposals.append(planar_proposals)
-        
-        if axes_only:
-            pairs_to_dirs = {pair : [mc_axis[c] for c in axes[pair]] for pair in axes}
-            pairs_to_axes = {pair : [(c,[flattened_origins[c2] for c2 in axes[pair][c]]) for c in axes[pair]] for pair in axes} #pair -> [(dir_ind, [origins of axes with that dir])]
-            #return:
-            #clusters: index -> list of other indices with the same direction
-            #all_clusters: same index -> (index -> list of other indices on the same axis with that direction)
-            return axes, pairs_to_dirs, pairs_to_axes, clusters, all_clusters 
+            
+            axial_matches = inter_group_matches(mc_counts, projected_origins, 2, self.epsilon_rel, point_to_grouped_map=index_map)
+            axial_proposals = self._matches_to_proposals(axial_matches, 2)
+            all_axial_proposals.append(axial_proposals)
+            
+            z_quat = [np.concatenate([mc_quat[same_dir_ind], [z_dist]]) for same_dir_ind, z_dist in zip(same_dir_inds, projected_z)]
+            planar_matches = inter_group_matches(mc_counts, z_quat, 5, self.epsilon_rel, point_to_grouped_map=index_map)
+            planar_proposals = self._matches_to_proposals(planar_matches, 3)
+            all_planar_proposals.append(planar_proposals)
 
         all_proposals = self._join_proposals(*all_planar_proposals)
         all_proposals = self._join_proposals(all_proposals, *all_axial_proposals)

@@ -3,13 +3,15 @@ import logging
 import os
 import sys
 import pandas as ps
-from mechanical.data import Dataset, BatchSaver, GlobalData, DisplacementPenalty
+from mechanical.data import Dataset, GlobalData
+from mechanical.data.data_stats import *
 from enum import Enum
 from mechanical.utils import EnumAction
 import math
 class Mode(Enum):
     SAVE_BATCHES = "SAVE_BATCHES"
     PENETRATION = "PENETRATION"
+    SAVE_AXIS_DATA = "SAVE_AXIS_DATA"
 
 parser = ArgumentParser()
 parser.add_argument('--index_file', nargs='+', default='/projects/grail/jamesn8/projects/mechanical/Mechanical/data/dataset/simple_valid_dataset.txt')
@@ -21,11 +23,22 @@ parser.add_argument('--stop_index', type=int, default=-1)
 parser.add_argument('--mode', type=Mode, action=EnumAction, required=True)
 parser.add_argument('--resume',action='store_true')
 
+#general args
+parser.add_argument('--max_topologies', type=int, default=5000)
+parser.add_argument('--epsilon_rel', type=float, default=0.001)
+parser.add_argument('--no_uvnet_features', dest='use_uvnet_features', action='store_false')
+parser.add_argument('--use_uvnet_features', dest='use_uvnet_features', action='store_true')
+parser.set_defaults(use_uvnet_features=True)
+
 #penetration args:
 parser.add_argument('--sliding_distance',type=float, default=.05, help='distance as a fraction of assembly maxdim')
 parser.add_argument('--rotation_angle',type=float, default=math.pi/16)
 parser.add_argument('--num_samples',type=int, default=100)
 parser.add_argument('--include_vertices', action='store_true')
+
+#axis args:
+parser.add_argument('--max_axis_groups',type=int, default=10)
+parser.add_argument('--save_mc_frames', action='store_true')
 
 args = parser.parse_args()
 
@@ -53,10 +66,17 @@ def main():
         batchpath = os.path.join(statspath, 'batches')
         if not os.path.isdir(batchpath):
             os.mkdir(batchpath)
-        action = BatchSaver(globaldata, batchpath, False, .001, 5000)
+        action = BatchSaver(globaldata, batchpath, args.use_uvnet_features, args.epsilon_rel, args.max_topologies)
+
     elif args.mode == Mode.PENETRATION:
         meshpath = os.path.join(args.dataroot, 'mesh')
         action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, args.include_vertices, meshpath)
+    
+    elif args.mode == Mode.SAVE_AXIS_DATA:
+        mc_path = os.path.join(statspath, 'axis_data')
+        if not os.path.isdir(mc_path):
+            os.mkdir(mc_path)
+        action = MCDataSaver(globaldata, mc_path, args.max_axis_groups, args.epsilon_rel, args.max_topologies, save_frames=args.save_mc_frames)
     
     dataset.map_data(action)
 

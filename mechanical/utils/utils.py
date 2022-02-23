@@ -7,6 +7,7 @@ from enum import Enum
 from argparse import Action
 import pandas as ps
 import os
+import numpy.linalg as LA
 
 class EnumAction(Action):
     """
@@ -85,6 +86,24 @@ def hsv2rgb(h, s, v):
     return r, g, b
 
 @njit
+def compute_basis(norm):
+    up = np.zeros(3)
+    ind = 0
+    mincomp = abs(norm[0])
+    for i in range(1,3):
+        abscomp = abs(norm[i])
+        if abscomp < mincomp:
+            ind = i
+            mincomp = abscomp
+        
+    up[ind] = 1
+    basis = np.empty((2, 3), dtype=norm.dtype)
+    basis[1] = np.cross(norm, up)
+    basis[1] /= LA.norm(basis[1])
+    basis[0] = np.cross(basis[1], norm)
+    return basis
+
+@njit
 def project_to_plane(point, normal):
     norm2 = np.dot(normal, normal)
     projdist = np.dot(normal, point)/norm2
@@ -141,7 +160,7 @@ def homogenize_frame(frame, z_flip_only=True):
 
 def cluster_points(nnhash, points):
     """
-    Returns a dictionary from a representative element index in each cluster to the number of elements in that cluster.
+    Returns a dictionary from a representative element index in each cluster to the list of indices of elements in that cluster.
     """
     visited = set()
     clusters = dict()
