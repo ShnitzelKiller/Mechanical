@@ -505,6 +505,7 @@ class AssemblyInfo:
             return coincident_proposals
         
         flattened_rots = [compute_basis(axis) for axis in flattened_axes]
+        mc_quat = [R.from_matrix(rot).as_quat() for rot in flattened_rots]
 
         all_axial_proposals = []
         all_planar_proposals = []
