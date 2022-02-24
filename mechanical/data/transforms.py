@@ -7,6 +7,11 @@ import logging
 import h5py
 from scipy.spatial.transform import Rotation as R
 import torch
+import functools
+
+
+def compose(*fs):
+    return functools.reduce(lambda f, g: lambda *a, **kw: f(g(*a, **kw)), fs)
 
 
 def df_to_mates(mate_subset):
@@ -32,7 +37,7 @@ class MeshLoader:
         return data
 
 class AssemblyLoader:
-    def __init__(self, global_data, datapath='/projects/grail/benjones/cadlab', use_uvnet_features=False, epsilon_rel=0.001, max_topologies=5000, pair_data=False, include_mcfs=True):
+    def __init__(self, global_data, datapath='/projects/grail/benjones/cadlab', use_uvnet_features=False, epsilon_rel=0.001, max_topologies=5000, pair_data=False, include_mcfs=True, precompute=False):
         self.global_data = global_data
         self.datapath = datapath
         self.use_uvnet_features = use_uvnet_features
@@ -40,6 +45,7 @@ class AssemblyLoader:
         self.max_topologies = max_topologies
         self.pair_data = pair_data
         self.include_mcfs = include_mcfs
+        self.precompute = precompute
 
 
     def __call__(self, data):
@@ -77,7 +83,7 @@ class AssemblyLoader:
         occ_to_index = dict()
         for i,occ in enumerate(occ_ids):
             occ_to_index[occ] = i
-        data.assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, epsilon_rel=self.epsilon_rel, use_uvnet_features=self.use_uvnet_features, max_topologies=self.max_topologies, include_mcfs=self.include_mcfs)
+        data.assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, epsilon_rel=self.epsilon_rel, use_uvnet_features=self.use_uvnet_features, max_topologies=self.max_topologies, include_mcfs=self.include_mcfs, precompute=self.precompute)
         if self.pair_data:
             pair_to_index = dict()
             mate_subset = self.global_data.mate_df.loc[[data.ind]]
@@ -88,49 +94,10 @@ class AssemblyLoader:
             data.pair_to_index = pair_to_index
         return data
 
-class GetMCData:
-    def __init__(self, global_data, max_z_groups, mc_path, precomputed=True):
-        self.global_data = global_data
-        self.max_groups = max_z_groups
+class LoadMCData:
+    def __init__(self, mc_path):
         self.mc_path = mc_path
-        self.precomputed = precomputed
-
+    
     def __call__(self, data):
-        part_subset = self.global_data.part_df.loc[[data.ind]]
-        mcfile = os.path.join(self.mc_path, f"{data.ind}.hdf5")
-        if self.precomputed:
-            if os.path.isfile(mcfile):
-                data.mcfile = mcfile
-        elif data.assembly_info.valid and len(data.assembly_info.parts) == part_subset.shape[0]:
-            axes, pairs_to_dirs, pairs_to_axes, dir_clusters, dir_to_ax_clusters = data.assembly_info.mate_proposals(max_z_groups=self.max_groups, axes_only=True)
-            with h5py.File(mcfile, "w") as f:
-                mc_frames = f.create_group('mc_frames')
-                for k in range(len(data.assembly_info.mc_origins_all)):
-                    partgroup = mc_frames.create_group(str(k))
-                    partgroup.create_dataset('origins', data=np.array(data.assembly_info.mc_origins_all[k]))
-                    rots_quat = np.array([R.from_matrix(rot).as_quat() for rot in data.assembly_info.mc_rots_all[k]])
-                    partgroup.create_dataset('rots', data=rots_quat)
-                dir_groups = f.create_group('dir_clusters')
-                for c in dir_clusters:
-                    dir = dir_groups.create_group(str(c))
-                    dir.create_dataset('indices', data=np.array(list(dir_clusters[c])))
-                    ax = dir.create_group('axial_clusters')
-                    if c in dir_to_ax_clusters:
-                        for c2 in dir_to_ax_clusters[c]:
-                            ax.create_dataset(str(c2), data=np.array(list(dir_to_ax_clusters[c][c2])))
-                pairdata = f.create_group('pair_data') #here, indices mean the UNIQUE representative indices for retrieving each axis from the mc data
-                for pair in pairs_to_dirs:
-                    key = f'{pair[0]},{pair[1]}'
-                    group = pairdata.create_group(key)
-                    dirgroup = group.create_group('dirs')
-                    dirgroup.create_dataset('values', data = np.array(pairs_to_dirs[pair]))
-                    dirgroup.create_dataset('indices', data = np.array(list(axes[pair])))
-                    ax_group = group.create_group('axes')
-                    for dir_ind, origins in pairs_to_axes[pair]:
-                        ax_cluster = ax_group.create_group(str(dir_ind))
-                        ax_cluster.create_dataset('values', data = np.array(origins))
-                        ax_cluster.create_dataset('indices', data = np.array(axes[pair][dir_ind]))
-            data.mcfile = mcfile
-
+        data.mcfile = os.path.join(self.mc_path, f"{data.ind}.hdf5")
         return data
-

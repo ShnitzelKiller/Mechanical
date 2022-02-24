@@ -1,6 +1,6 @@
 from argparse import ArgumentParser
 import pandas as ps
-from mechanical.data import AssemblyInfo, assembly_data, mate_types, cs_from_origin_frame, cs_to_origin_frame
+from mechanical.data import AssemblyInfo, assembly_data
 import os
 import time
 from onshape.brepio import Mate
@@ -12,8 +12,8 @@ from enum import Enum, auto
 from pspart import Part
 import h5py
 from scipy.spatial.transform import Rotation as R
-from utils import MateTypes, homogenize_frame, homogenize_sign, project_to_plane, EnumAction
-
+from utils import MateTypes, homogenize_frame, homogenize_sign, project_to_plane, EnumAction, cs_from_origin_frame, cs_to_origin_frame
+from mechanical.data.util import df_to_mates, mate_types, mates_equivalent
 class Mode(Enum):
     CHECK_BATCHES = "CHECK_BATCHES"
     CHECK_BOUNDS = "CHECK_BOUNDS"
@@ -66,17 +66,6 @@ def check_mates(batch, mates, pair_to_index):
 
     return True
 
-def df_to_mates(mate_subset):
-    mates = []
-    for j in range(mate_subset.shape[0]):
-        mate_row = mate_subset.iloc[j]
-        mate = Mate(occIds=[mate_row[f'Part{p+1}'] for p in range(2)],
-                origins=[mate_row[f'Origin{p+1}'] for p in range(2)],
-                rots=[mate_row[f'Axes{p+1}'] for p in range(2)],
-                name=mate_row['Name'],
-                mateType=mate_row['Type'])
-        mates.append(mate)
-    return mates
 
 def mate_self_consistent(mate, tol):
     if mate.type == MateTypes.FASTENED:
@@ -91,24 +80,6 @@ def mate_self_consistent(mate, tol):
             return np.allclose(projpoints[0], projpoints[1], rtol=0, atol=tol)
         else:
             return False
-
-def mates_equivalent(mate1, mate2, tol):
-    if mate1.type != mate2.type:
-        return False
-    else:
-        if mate1.type == MateTypes.FASTENED:
-            return True
-        elif mate1.type == MateTypes.SLIDER:
-            return np.allclose(mate1.get_axes()[0], mate2.get_axes()[0], rtol=0, atol=tol)
-        else:
-            axis1 = mate1.get_axes()[0]
-            axis2 = mate2.get_axes()[0]
-            if np.allclose(axis1, axis2, rtol=0, atol=tol):
-                projpoint1 = mate1.get_projected_origins(axis1)[0]
-                projpoint2 = mate2.get_projected_origins(axis2)[0]
-                return np.allclose(projpoint1, projpoint2, rtol=0, atol=tol)
-            else:
-                return False
 
 class Logger:
     def __init__(self, filepath):

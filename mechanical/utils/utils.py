@@ -158,6 +158,28 @@ def homogenize_frame(frame, z_flip_only=True):
     frame_out[:,2] = z_final
     return frame_out
 
+def apply_transform(tf, v, is_points=True):
+    "Apply the 4-matrix `tf` to a vector or column-wise matrix of vectors. If is_points, also add the translation."
+    v_trans = tf[:3,:3] @ v
+    if is_points:
+        if v.ndim==1:
+            v_trans += tf[:3,3]
+        elif v.ndim==2:
+            v_trans += tf[:3,3,np.newaxis]
+    return v_trans
+
+def cs_to_origin_frame(cs):
+    origin = cs[:,3]
+    if origin[3] != 1:
+        origin /= origin[3]
+    return origin[:3], cs[:3,:3]
+
+def cs_from_origin_frame(origin, frame):
+    cs = np.identity(4, np.float64)
+    cs[:3,:3] = frame
+    cs[:3,3] = origin
+    return cs
+
 def cluster_points(nnhash, points):
     """
     Returns a dictionary from a representative element index in each cluster to the list of indices of elements in that cluster.
@@ -311,18 +333,6 @@ def adjacency_matrix(occs, mates):
             adj[ind2, ind1] = mateType
     
     return adj
-
-class MateTypes(Enum):
-    PIN_SLOT = 'PIN_SLOT'
-    BALL = 'BALL'
-    PARALLEL = 'PARALLEL'
-    SLIDER = 'SLIDER'
-    REVOLUTE = 'REVOLUTE'
-    CYLINDRICAL = 'CYLINDRICAL'
-    PLANAR = 'PLANAR'
-    FASTENED = 'FASTENED'
-    def __eq__(self, obj):
-        return self.value == obj
 
 
 def external_adjacency_list(occs, mates):

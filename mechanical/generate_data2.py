@@ -12,6 +12,7 @@ class Mode(Enum):
     SAVE_BATCHES = "SAVE_BATCHES"
     PENETRATION = "PENETRATION"
     SAVE_AXIS_DATA = "SAVE_AXIS_DATA"
+    CHECK_MATES = "CHECK_MATES"
 
 parser = ArgumentParser()
 parser.add_argument('--index_file', nargs='+', default='/projects/grail/jamesn8/projects/mechanical/Mechanical/data/dataset/simple_valid_dataset.txt')
@@ -39,6 +40,11 @@ parser.add_argument('--include_vertices', action='store_true')
 #axis args:
 parser.add_argument('--max_axis_groups',type=int, default=10)
 parser.add_argument('--save_mc_frames', action='store_true')
+
+#check mates args:
+parser.add_argument('--validate_feasibility', action='store_true')
+parser.add_argument('--check_alternate_paths', action='store_true')
+parser.add_argument('--mc_path', type=str, default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/new_axes/axis_data', help='path to desired MC dataset')
 
 args = parser.parse_args()
 
@@ -77,6 +83,9 @@ def main():
         if not os.path.isdir(mc_path):
             os.mkdir(mc_path)
         action = MCDataSaver(globaldata, mc_path, args.max_axis_groups, args.epsilon_rel, args.max_topologies, save_frames=args.save_mc_frames)
+    
+    elif args.mode == Mode.CHECK_MATES:
+        action = MateChecker(globaldata, args.mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths)
     
     dataset.map_data(action)
 

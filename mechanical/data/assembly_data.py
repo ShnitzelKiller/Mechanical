@@ -8,7 +8,8 @@ import torch
 #from torch_geometric.data import Batch
 from pspart import NNHash
 import pspy
-from mechanical.utils import find_neighbors, inter_group_matches, cluster_points, homogenize_frame, external_adjacency_list_from_brepdata, MateTypes, compute_basis
+from mechanical.utils import find_neighbors, inter_group_matches, cluster_points, homogenize_frame, external_adjacency_list_from_brepdata, compute_basis, apply_transform
+from mechanical.data.util import MateTypes, mate_types
 from scipy.spatial.transform import Rotation as R
 from automate import PartFeatures, part_to_graph, flatbatch
 import torch_scatter
@@ -18,8 +19,6 @@ import trimesh
 import copy
 
 from mechanical.utils.utils import homogenize, homogenize_sign, inter_group_cluster_points, project_to_plane
-
-mate_types = [m.value for m in list(MateTypes)]
 
 def bboxes_overlap(bbox1, bbox2, margin=0):
     overlap = True
@@ -42,28 +41,6 @@ def global_bounding_box(parts, transforms=None):
     minPt = np.array([points.min(axis=0) for points in allpoints]).min(axis=0)
     maxPt = np.array([points.max(axis=0) for points in allpoints]).max(axis=0)
     return np.vstack([minPt, maxPt])
-
-def apply_transform(tf, v, is_points=True):
-    "Apply the 4-matrix `tf` to a vector or column-wise matrix of vectors. If is_points, also add the translation."
-    v_trans = tf[:3,:3] @ v
-    if is_points:
-        if v.ndim==1:
-            v_trans += tf[:3,3]
-        elif v.ndim==2:
-            v_trans += tf[:3,3,np.newaxis]
-    return v_trans
-
-def cs_to_origin_frame(cs):
-    origin = cs[:,3]
-    if origin[3] != 1:
-        origin /= origin[3]
-    return origin[:3], cs[:3,:3]
-
-def cs_from_origin_frame(origin, frame):
-    cs = np.identity(4, np.float64)
-    cs[:3,:3] = frame
-    cs[:3,3] = origin
-    return cs
 
 def _transform_matches(matches, index_maps):
     return [(index_maps[0][match[0]], index_maps[1][match[1]]) for match in matches]
@@ -90,7 +67,7 @@ class AssemblyInfo:
             self.occ_to_index[occ] = i
               
 
-    def __init__(self, part_paths, transforms, occ_ids, epsilon_rel=0.001, use_uvnet_features=False, max_topologies=10000, include_mcfs=True):
+    def __init__(self, part_paths, transforms, occ_ids, epsilon_rel=0.001, use_uvnet_features=False, max_topologies=10000, include_mcfs=True, precompute=False):
         self.epsilon_rel = epsilon_rel
         self.use_uvnet_features = use_uvnet_features
         self.stats = dict()
@@ -167,6 +144,8 @@ class AssemblyInfo:
                 assert([self.occ_to_index[occi] == i for i, occi in enumerate(self.occ_ids)])
                 assert([self.occ_ids[self.occ_to_index[occi]] == occi for occi in self.occ_to_index])
         self.stats['initialized'] = self.valid
+        if self.valid and precompute:
+            self.precompute_geometry()
         
 
     def transform_parts(self):

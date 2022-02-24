@@ -77,12 +77,12 @@ class Stats:
             if self.format == 'parquet':
                 fname = path + '.parquet'
                 if os.path.isfile(fname):
-                    fname = path + f'_{random.randint(0,1000000)}' + '.parquet'
+                    fname = path + f'_v{random.randint(0,1000000)}' + '.parquet'
                 df.to_parquet(fname)
             elif self.format == 'hdf':
                 fname = path + '.hdf'
                 if os.path.isfile(fname):
-                    fname = path + f'_{random.randint(0,1000000)}' + '.h5'
+                    fname = path + f'_v{random.randint(0,1000000)}' + '.h5'
                 df.to_hdf(fname, self.key)
     
     def combine(self, other):

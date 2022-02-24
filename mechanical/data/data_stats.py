@@ -1,13 +1,15 @@
 from xml.etree.ElementInclude import include
-from mechanical.data import AssemblyLoader, Stats, MeshLoader
+from mechanical.data import AssemblyLoader, Stats, MeshLoader, LoadMCData, compose
 import logging
 import os
 import h5py
 import numpy as np
 import torch
-from mechanical.utils import MateTypes
+from mechanical.utils import homogenize_frame, homogenize_sign, cs_from_origin_frame, cs_to_origin_frame, project_to_plane
 from mechanical.geometry import displaced_min_signed_distance, min_signed_distance_symmetric
 from mechanical.utils import joinmeshes
+from mechanical.data.util import df_to_mates, MateTypes, mates_equivalent
+
 #import meshplot as mp
 #mp.offline()
 class DataVisitor:
@@ -185,3 +187,146 @@ class MCDataSaver(DataVisitor):
                         ax_cluster.create_dataset('indices', data = np.array(pairs_to_axes[pair][dir_ind], dtype=np.int32))
 
         return {'mc_stats': stats}
+
+
+def load_axes(path):
+    with h5py.File(path, 'r') as f:
+        pair_to_dirs = {}
+        pair_to_axes = {}
+        pair_data = f['pair_data']
+        for key in pair_data.keys():
+            pair = tuple(int(k) for k in key.split(','))
+            inds = np.array(pair_data[key]['dirs']['indices'])
+            pair_to_dirs[pair] = inds
+            pair_to_axes[pair] = []
+            for dir_index in pair_data[key]['axes'].keys():
+                for ax_ind in pair_data[key]['axes'][dir_index]['indices']:
+                    pair_to_axes[pair].append((int(dir_index), ax_ind))
+    return pair_to_dirs, pair_to_axes #pair -> dir, and pair -> (dir, origin)
+
+
+class MateChecker(DataVisitor):
+    def __init__(self, global_data, mc_path, epsilon_rel, max_topologies, validate_feasibility=False, check_alternate_paths=False):
+        self.transforms = compose(LoadMCData(mc_path), AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies, precompute=True))
+        self.global_data = global_data
+        self.epsilon_rel = epsilon_rel
+        self.validate_feasibility = validate_feasibility
+        self.check_alternate_paths = check_alternate_paths
+
+    def process(self, data):
+        mate_stats = Stats()
+        all_stats = Stats()
+        mate_subset = self.global_data.mate_df.loc[data.ind]
+        part_subset = self.global_data.part_df.loc[data.ind]
+        allowed_mates = {MateTypes.FASTENED.value, MateTypes.REVOLUTE.value, MateTypes.CYLINDRICAL.value, MateTypes.SLIDER.value}    
+        if all([k in allowed_mates for k in mate_subset['Type']]):
+            mates = df_to_mates(mate_subset)
+            rigid_comps = list(part_subset['RigidComponentID'])
+            assembly_info = data.assembly_info
+            if assembly_info.valid and len(assembly_info.parts) == part_subset.shape[0]:
+                curr_mate_stats = []
+                mc_origins_flat = np.array([origin for mc_origins in assembly_info.mc_origins_all for origin in mc_origins])
+                mc_axes_flat = np.array([axis for mc_axes in assembly_info.mc_axes_homogenized_all for axis in mc_axes])
+                pairs_to_dirs, pairs_to_axes = load_axes(data.mcfile)
+                for j,mate in enumerate(mates):
+                    mate_stat = {'Assembly': data.ind, 'dir_index': -1, 'axis_index': -1, 'has_any_axis':False, 'has_same_dir_axis':False, 'type': mate.type}
+                    part_indices = [assembly_info.occ_to_index[me[0]] for me in mate.matedEntities]
+                    mate_origins = []
+                    mate_dirs = []
+                    for partIndex, me in zip(part_indices, mate.matedEntities):
+                        origin_local = me[1][0]
+                        frame_local = me[1][1]
+                        cs = cs_from_origin_frame(origin_local, frame_local)
+                        cs_transformed = assembly_info.mate_transforms[partIndex] @ cs
+                        origin, rot = cs_to_origin_frame(cs_transformed)
+                        rot_homogenized = homogenize_frame(rot, z_flip_only=True)
+                        mate_origins.append(origin)
+                        mate_dirs.append(rot_homogenized[:,2])
+                    
+                    found = False
+
+                    mate_stat['dirs_agree'] = np.allclose(mate_dirs[0], mate_dirs[1], rtol=0, atol=self.epsilon_rel)
+                    projected_mate_origins = [project_to_plane(origin, mate_dirs[0]) for origin in mate_origins]
+                    mate_stat['axes_agree'] = mate_stat['dirs_agree'] and np.allclose(projected_mate_origins[0], projected_mate_origins[1], rtol=0, atol=self.epsilon_rel)
+                    key = tuple(sorted(part_indices))
+
+                    mate_stat['has_any_axis'] = key in pairs_to_axes
+
+                    if mate_stat['dirs_agree']:
+                        if key in pairs_to_dirs:
+                            for dir_ind in pairs_to_dirs[key]:
+                                dir = mc_axes_flat[dir_ind]
+                                dir_homo, _ = homogenize_sign(dir)
+                                if np.allclose(mate_dirs[0], dir_homo, rtol=0, atol=self.epsilon_rel):
+                                    mate_stat['dir_index'] = dir_ind
+                                    break
+                        if key in pairs_to_axes:
+                            for dir_ind, origin_ind in pairs_to_axes[key]:
+                                dir = mc_axes_flat[dir_ind]
+                                dir_homo, _ = homogenize_sign(dir)
+                                if np.allclose(mate_dirs[0], dir_homo, rtol=0, atol=self.epsilon_rel):
+                                    mate_stat['has_same_dir_axis'] = True
+                                    break
+                    
+                    if mate_stat['axes_agree']:
+                        if key in pairs_to_axes:
+                            for dir_ind, origin_ind in pairs_to_axes[key]:
+                                dir = mc_axes_flat[dir_ind]
+                                origin = mc_origins_flat[origin_ind]
+                                dir_homo, _ = homogenize_sign(dir)
+                                if np.allclose(mate_dirs[0], dir_homo, rtol=0, atol=self.epsilon_rel):
+                                    projected_origin = project_to_plane(origin, mate_dirs[0])
+                                    if np.allclose(projected_mate_origins[0], projected_origin, rtol=0, atol=self.epsilon_rel):
+                                        mate_stat['axis_index'] = origin_ind
+                                        break
+
+                    if mate.type == MateTypes.FASTENED:
+                        found = True
+                    elif mate.type == MateTypes.SLIDER:
+                        found = mate_stat['dir_index'] != -1
+                        
+                    elif mate.type == MateTypes.CYLINDRICAL or mate.type == MateTypes.REVOLUTE:
+                        found = mate_stat['axis_index'] != -1
+                    
+                    if self.validate_feasibility:
+                        mate_stat['rigid_comp_attempting_motion'] = rigid_comps[part_indices[0]] == rigid_comps[part_indices[1]] and mate.type != MateTypes.FASTENED
+                        mate_stat['valid'] = found and not mate_stat['rigid_comp_attempting_motion']
+                    else:
+                        mate_stat['valid'] = found
+
+                    mate_stats.append(mate_stat, mate_subset.iloc[j]['MateIndex'])
+                
+                if self.check_alternate_paths:
+                    validation_stats = assembly_info.validate_mates(mates)
+                    assert(len(validation_stats) == len(curr_mate_stats))
+                    final_stats = [{**stat, **vstat} for stat, vstat in zip(curr_mate_stats, validation_stats)]
+                    curr_mate_stats = final_stats
+                
+                if self.validate_feasibility:
+                    num_incompatible_mates = 0
+                    num_moving_mates_between_same_rigid = 0
+                    num_multimates_between_rigid = 0
+                    rigid_pairs_to_mate = dict()
+                    for pair in data.pair_to_index:
+                        rigid_pair = tuple(sorted([rigid_comps[k] for k in pair]))
+                        if rigid_pair[0] != rigid_pair[1]:
+                            if rigid_pair not in rigid_pairs_to_mate:
+                                rigid_pairs_to_mate[rigid_pair] = data.pair_to_index[pair]
+                            else:
+                                num_multimates_between_rigid += 1
+                                prevMate = mates[rigid_pairs_to_mate[rigid_pair]]
+                                currMate = mates[data.pair_to_index[pair]]
+                                prevMate = assembly_info.transform_mates([prevMate])[0]
+                                currMate = assembly_info.transform_mates([currMate])[0]
+                                if not mates_equivalent(prevMate, currMate, self.epsilon_rel):
+                                    num_incompatible_mates += 1
+                        else:
+                            if mates[data.pair_to_index[pair]].type != MateTypes.FASTENED:
+                                num_moving_mates_between_same_rigid += 1
+                    feasible = (num_moving_mates_between_same_rigid == 0) and (num_incompatible_mates == 0) and all([mate_stat['valid'] for mate_stat in curr_mate_stats])
+                    stat = {'num_moving_mates_between_same_rigid':num_moving_mates_between_same_rigid,
+                            'num_incompatible_mates_between_rigid':num_incompatible_mates,
+                            'num_multimates_between_rigid':num_multimates_between_rigid,
+                            'feasible': feasible}
+                    all_stats.append(stat, data.ind)
+        return {'mate_check_stats': mate_stats, 'assembly_stats': all_stats}
