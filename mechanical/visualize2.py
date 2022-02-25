@@ -63,11 +63,15 @@ def add_axis(center, x_dir, y_dir, z_dir, scale=1, mate_type=None):
     return objects
 
 
-def occ_to_mesh(g, tf=None):
+def occ_to_mesh(g, tf=None, use_pspy=False):
     if tf is None:
         tf = g[0]
-    V = g[1].V.copy()
-    F = g[1].F
+    if use_pspy:
+        V = g[1].mesh.V.copy()
+        F = g[1].mesh.F
+    else:
+        V = g[1].V.copy()
+        F = g[1].F
     if V.shape[0] > 0:
         V = (tf[:3,:3] @ V.T).T + tf[:3,3]
     return V, F
@@ -81,6 +85,7 @@ def filter_assembly(geo, mates, indices):
 
 def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600):
     #max_part_dim = max([max(geo[i][1].V.max(0)-geo[i][1].V.min(0)) for i in geo if geo[i][1].V.shape[0] > 0])
+    is_pspy = not hasattr(geo[list(geo)[0]][1], 'all_mate_connectors')
     num_parts = len(geo)
     part_index = 0
     geo_colors = dict()
@@ -94,7 +99,7 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
         g = geo[i]
         if g[1] is None:
             continue
-        V, F = occ_to_mesh(g)
+        V, F = occ_to_mesh(g, use_pspy=is_pspy)
         if V.shape[0] == 0:
             continue
         minPt = np.minimum(minPt, V.min(0))
@@ -111,7 +116,7 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
         if g[1] is None:
             continue
         tf = tfs[i]
-        V, F = occ_to_mesh(g, tf)
+        V, F = occ_to_mesh(g, tf=tf, use_pspy=is_pspy)
         if V.shape[0] == 0:
             continue
         
@@ -150,9 +155,13 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
     
         mcf_origins = []
         tf = tfs[i]
-        for mc in g[1].all_mate_connectors:
-            mcf = mc.get_coordinate_system()
-            mcf_origins.append(tf[:3,:3] @ mcf[:3,3] + tf[:3,3])
+        if is_pspy:
+            for mc in g[1].default_mcfs:
+                mcf_origins.append(tf[:3, :3] @ mc.origin + tf[:3,3])
+        else:
+            for mc in g[1].all_mate_connectors:
+                mcf = mc.get_coordinate_system()
+                mcf_origins.append(tf[:3,:3] @ mcf[:3,3] + tf[:3,3])
         mcf_origins = np.array(mcf_origins)
         pointgeometry = p3s.BufferGeometry(attributes={'position': p3s.BufferAttribute(mcf_origins.astype(np.float32), normalized=False)})
         pointsmaterial = p3s.PointsMaterial(color=f"rgb({colors_int[0]//2},{colors_int[1]//2},{colors_int[2]//2})", size=3, sizeAttenuation=False)

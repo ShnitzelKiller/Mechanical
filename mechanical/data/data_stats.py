@@ -1,10 +1,13 @@
 from xml.etree.ElementInclude import include
+
+from attr import validate
 from mechanical.data import AssemblyLoader, Stats, MeshLoader, LoadMCData, compose
 import logging
 import os
 import h5py
 import numpy as np
 import torch
+from mechanical.data.dataloaders import Data
 from mechanical.utils import homogenize_frame, homogenize_sign, cs_from_origin_frame, cs_to_origin_frame, project_to_plane
 from mechanical.geometry import displaced_min_signed_distance, min_signed_distance_symmetric
 from mechanical.utils import joinmeshes
@@ -24,9 +27,10 @@ class NoopVisitor(DataVisitor):
         self.transforms = transforms
 
 class BatchSaver(DataVisitor):
-    def __init__(self, global_data, out_path, use_uvnet_features, epsilon_rel, max_topologies):
+    def __init__(self, global_data, out_path, use_uvnet_features, epsilon_rel, max_topologies, dry_run):
         self.transforms = AssemblyLoader(global_data, use_uvnet_features=use_uvnet_features, epsilon_rel=epsilon_rel, max_topologies=max_topologies)
         self.out_path = out_path
+        self.dry_run = dry_run
 
     def process(self, data):
         out_dict = {}
@@ -35,8 +39,9 @@ class BatchSaver(DataVisitor):
         out_dict['assembly_stats'] = stat
         if data.assembly_info.stats['initialized'] and data.assembly_info.stats['num_invalid_loaded_parts'] == 0:
             batch = data.assembly_info.create_batches()
-            torch_datapath = os.path.join(self.out_path, f'{data.ind}.dat')
-            torch.save(batch, torch_datapath)
+            if not self.dry_run:
+                torch_datapath = os.path.join(self.out_path, f'{data.ind}.dat')
+                torch.save(batch, torch_datapath)
         return out_dict
 
 
@@ -133,11 +138,13 @@ class DisplacementPenalty(DataVisitor):
         return {'mate_penetration_stats': stats}
 
 class MCDataSaver(DataVisitor):
-    def __init__(self, global_data, mc_path, max_axis_groups, epsilon_rel, max_topologies, save_frames=False):
+    def __init__(self, global_data, mc_path, max_axis_groups, epsilon_rel, max_topologies, save_frames=False, save_dirs=False, dry_run=False):
         self.transforms = AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies)
         self.max_groups = max_axis_groups
         self.mc_path = mc_path
         self.save_frames = save_frames
+        self.save_dirs = save_dirs
+        self.dry_run = dry_run
     
     def process(self, data):
         stats = Stats()
@@ -153,38 +160,42 @@ class MCDataSaver(DataVisitor):
                                 'num_MCs_1': len(filtered_clusters[0]), 'num_MCs_2': len(filtered_clusters[1]),
                                 'assembly': data.ind})
         
+        if not self.dry_run:
+            with h5py.File(os.path.join(self.mc_path, f"{data.ind}.hdf5"), "w") as f:
+                f.create_dataset('mc_part_labels', data=mc_part_labels)
 
-        with h5py.File(os.path.join(self.mc_path, f"{data.ind}.hdf5"), "w") as f:
-            f.create_dataset('mc_part_labels', data=mc_part_labels)
+                if self.save_frames:
+                    mc_frames = f.create_group('mc_frames')
+                    for k in range(len(assembly_info.mc_origins_all)):
+                        partgroup = mc_frames.create_group(str(k))
+                        partgroup.create_dataset('origins', data=np.array(assembly_info.mc_origins_all[k]))
+                        partgroup.create_dataset('axes', data=np.array(assembly_info.mc_axes_all[k]))
+                        #rots_quat = np.array([R.from_matrix(rot).as_quat() for rot in assembly_info.mc_rots_all[k]])
+                        #partgroup.create_dataset('rots', data=rots_quat)
+                
+                f.create_dataset('mc_counts', data=[len(part.default_mcfs) for part in assembly_info.parts])
 
-            if self.save_frames:
-                mc_frames = f.create_group('mc_frames')
-                for k in range(len(assembly_info.mc_origins_all)):
-                    partgroup = mc_frames.create_group(str(k))
-                    partgroup.create_dataset('origins', data=np.array(assembly_info.mc_origins_all[k]))
-                    #rots_quat = np.array([R.from_matrix(rot).as_quat() for rot in assembly_info.mc_rots_all[k]])
-                    #partgroup.create_dataset('rots', data=rots_quat)
-
-            dir_groups = f.create_group('dir_clusters')
-            for c in dir_data:
-                dir = dir_groups.create_group(str(c))
-                dir.create_dataset('indices', data=np.array(dir_data[c][0], dtype=np.int32))
-                ax = dir.create_group('axial_clusters')
-                for c2 in all_axis_clusters[c]:
-                    ax.create_dataset(str(c2), data=np.array(all_axis_clusters[c][c2], dtype=np.int32))
-            pairdata = f.create_group('pair_data') #here, indices mean the UNIQUE representative indices for retrieving each axis from the mc data
-            for pair in pairs_to_dir_clusters:
-                key = f'{pair[0]},{pair[1]}'
-                pair_group = pairdata.create_group(key)
-                dirgroup = pair_group.create_group('dirs')
-                #dirgroup.create_dataset('values', data = np.array(pairs_to_dirs[pair]))
-                dirgroup.create_dataset('indices', data = np.array(list(pairs_to_dir_clusters[pair]), dtype=np.int32))
-                ax_group = pair_group.create_group('axes')
-                if pair in pairs_to_axes:
-                    for dir_ind in pairs_to_axes[pair]:
-                        ax_cluster = ax_group.create_group(str(dir_ind))
-                        #ax_cluster.create_dataset('values', data = np.array(origins))
-                        ax_cluster.create_dataset('indices', data = np.array(pairs_to_axes[pair][dir_ind], dtype=np.int32))
+                dir_groups = f.create_group('dir_clusters')
+                for c in dir_data:
+                    dir = dir_groups.create_group(str(c))
+                    dir.create_dataset('indices', data=np.array(dir_data[c][0], dtype=np.int32))
+                    ax = dir.create_group('axial_clusters')
+                    for c2 in all_axis_clusters[c]:
+                        ax.create_dataset(str(c2), data=np.array(all_axis_clusters[c][c2], dtype=np.int32))
+                pairdata = f.create_group('pair_data') #here, indices mean the UNIQUE representative indices for retrieving each axis from the mc data
+                for pair in pairs_to_dir_clusters:
+                    key = f'{pair[0]},{pair[1]}'
+                    pair_group = pairdata.create_group(key)
+                    if self.save_dirs:
+                        dirgroup = pair_group.create_group('dirs')
+                        #dirgroup.create_dataset('values', data = np.array(pairs_to_dirs[pair]))
+                        dirgroup.create_dataset('indices', data = np.array(list(pairs_to_dir_clusters[pair]), dtype=np.int32))
+                    ax_group = pair_group.create_group('axes')
+                    if pair in pairs_to_axes:
+                        for dir_ind in pairs_to_axes[pair]:
+                            ax_cluster = ax_group.create_group(str(dir_ind))
+                            #ax_cluster.create_dataset('values', data = np.array(origins))
+                            ax_cluster.create_dataset('indices', data = np.array(pairs_to_axes[pair][dir_ind], dtype=np.int32))
 
         return {'mc_stats': stats}
 
@@ -197,11 +208,14 @@ def load_axes(path):
         for key in pair_data.keys():
             pair = tuple(int(k) for k in key.split(','))
             inds = np.array(pair_data[key]['dirs']['indices'])
-            pair_to_dirs[pair] = inds
-            pair_to_axes[pair] = []
+            if len(inds) > 0:
+                pair_to_dirs[pair] = inds
+            axes = []
             for dir_index in pair_data[key]['axes'].keys():
                 for ax_ind in pair_data[key]['axes'][dir_index]['indices']:
-                    pair_to_axes[pair].append((int(dir_index), ax_ind))
+                    axes.append((int(dir_index), ax_ind))
+            if axes:
+                pair_to_axes[pair] = axes
     return pair_to_dirs, pair_to_axes #pair -> dir, and pair -> (dir, origin)
 
 
@@ -218,12 +232,20 @@ class MateChecker(DataVisitor):
         all_stats = Stats()
         mate_subset = self.global_data.mate_df.loc[data.ind]
         part_subset = self.global_data.part_df.loc[data.ind]
-        allowed_mates = {MateTypes.FASTENED.value, MateTypes.REVOLUTE.value, MateTypes.CYLINDRICAL.value, MateTypes.SLIDER.value}    
+        allowed_mates = {MateTypes.FASTENED.value, MateTypes.REVOLUTE.value, MateTypes.CYLINDRICAL.value, MateTypes.SLIDER.value}
+
+        num_discrepant_mc_counts = 0
         if all([k in allowed_mates for k in mate_subset['Type']]):
             mates = df_to_mates(mate_subset)
             rigid_comps = list(part_subset['RigidComponentID'])
             assembly_info = data.assembly_info
             if assembly_info.valid and len(assembly_info.parts) == part_subset.shape[0]:
+                with h5py.File(data.mcfile,'r') as f:
+                    for part, siz in zip(assembly_info.parts, f['mc_counts']):
+                        if len(part.default_mcfs) != siz:
+                            num_discrepant_mc_counts += 1
+                stat = {'num_discrepant_mc_counts': num_discrepant_mc_counts}
+
                 curr_mate_stats = []
                 mc_origins_flat = np.array([origin for mc_origins in assembly_info.mc_origins_all for origin in mc_origins])
                 mc_axes_flat = np.array([axis for mc_axes in assembly_info.mc_axes_homogenized_all for axis in mc_axes])
@@ -243,7 +265,7 @@ class MateChecker(DataVisitor):
                         mate_origins.append(origin)
                         mate_dirs.append(rot_homogenized[:,2])
                     
-                    found = False
+                    mate_valid = False
 
                     mate_stat['dirs_agree'] = np.allclose(mate_dirs[0], mate_dirs[1], rtol=0, atol=self.epsilon_rel)
                     projected_mate_origins = [project_to_plane(origin, mate_dirs[0]) for origin in mate_origins]
@@ -281,18 +303,18 @@ class MateChecker(DataVisitor):
                                         break
 
                     if mate.type == MateTypes.FASTENED:
-                        found = True
+                        mate_valid = mate_stat['has_any_axis']
                     elif mate.type == MateTypes.SLIDER:
-                        found = mate_stat['dir_index'] != -1
+                        mate_valid = mate_stat['dir_index'] != -1 and mate_stat['has_same_dir_axis']
                         
                     elif mate.type == MateTypes.CYLINDRICAL or mate.type == MateTypes.REVOLUTE:
-                        found = mate_stat['axis_index'] != -1
+                        mate_valid = mate_stat['axis_index'] != -1
                     
                     if self.validate_feasibility:
                         mate_stat['rigid_comp_attempting_motion'] = rigid_comps[part_indices[0]] == rigid_comps[part_indices[1]] and mate.type != MateTypes.FASTENED
-                        mate_stat['valid'] = found and not mate_stat['rigid_comp_attempting_motion']
+                        mate_stat['valid'] = mate_valid and not mate_stat['rigid_comp_attempting_motion']
                     else:
-                        mate_stat['valid'] = found
+                        mate_stat['valid'] = mate_valid
 
                     mate_stats.append(mate_stat, mate_subset.iloc[j]['MateIndex'])
                 
@@ -324,9 +346,21 @@ class MateChecker(DataVisitor):
                             if mates[data.pair_to_index[pair]].type != MateTypes.FASTENED:
                                 num_moving_mates_between_same_rigid += 1
                     feasible = (num_moving_mates_between_same_rigid == 0) and (num_incompatible_mates == 0) and all([mate_stat['valid'] for mate_stat in curr_mate_stats])
-                    stat = {'num_moving_mates_between_same_rigid':num_moving_mates_between_same_rigid,
+                    rigidstat = {'num_moving_mates_between_same_rigid':num_moving_mates_between_same_rigid,
                             'num_incompatible_mates_between_rigid':num_incompatible_mates,
                             'num_multimates_between_rigid':num_multimates_between_rigid,
                             'feasible': feasible}
-                    all_stats.append(stat, data.ind)
+                    stat = {**stat, **rigidstat}
+                all_stats.append(stat, data.ind)
         return {'mate_check_stats': mate_stats, 'assembly_stats': all_stats}
+
+class CombinedAxisMateChecker(DataVisitor):
+    def __init__(self, global_data, mc_path, epsilon_rel, max_topologies, validate_feasibility=False, check_alternate_paths=False, max_axis_groups=10, save_frames=False, save_dirs=True, dry_run=False):
+        self.mate_checker = MateChecker(global_data, mc_path, epsilon_rel, max_topologies, validate_feasibility=validate_feasibility, check_alternate_paths=check_alternate_paths)
+        self.axis_saver = MCDataSaver(global_data, mc_path, max_axis_groups, epsilon_rel, max_topologies, save_frames=save_frames, save_dirs=save_dirs, dry_run=dry_run)
+        self.transforms = self.mate_checker.transforms
+    
+    def process(self, data):
+        out_dict1 = self.axis_saver(data)
+        out_dict2 = self.mate_checker(data)
+        return {**out_dict1, **out_dict2}

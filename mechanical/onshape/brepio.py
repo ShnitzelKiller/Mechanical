@@ -1,5 +1,6 @@
 import json
 from pspart import Part, MateConnector
+import pspy
 import os
 import numpy as np
 from utils import project_to_plane
@@ -45,7 +46,7 @@ class Loader:
     def __init__(self, datapath):
         self.datapath = datapath
     
-    def load_flattened(self, path, geometry=True, skipInvalid=False, loadWorkspace=False):
+    def load_flattened(self, path, geometry=True, skipInvalid=False, loadWorkspace=False, use_pspy=False):
         #_,fname = os.path.split(path)
         #name, ext = os.path.splitext(fname)
         #did, mv, eid = name.split('_')
@@ -70,7 +71,12 @@ class Loader:
                 else:
                     raise FileNotFoundError(filepath)
             if not checkOnly:
-                return Part(filepath)
+                if use_pspy:
+                    part_opts = pspy.PartOptions()
+                    part_opts.num_uv_samples = 0
+                    return pspy.Part(filepath, part_opts)
+                else:
+                    return Part(filepath)
         
         if geometry:
             if not skipInvalid:

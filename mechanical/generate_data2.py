@@ -13,8 +13,11 @@ class Mode(Enum):
     PENETRATION = "PENETRATION"
     SAVE_AXIS_DATA = "SAVE_AXIS_DATA"
     CHECK_MATES = "CHECK_MATES"
+    SAVE_AXIS_AND_CHECK_MATES = "SAVE_AXIS_AND_CHECK_MATES"
 
 parser = ArgumentParser()
+
+#data loading args
 parser.add_argument('--index_file', nargs='+', default='/projects/grail/jamesn8/projects/mechanical/Mechanical/data/dataset/simple_valid_dataset.txt')
 parser.add_argument('--dataroot', default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/')
 parser.add_argument('--name', required=True)
@@ -29,6 +32,7 @@ parser.add_argument('--max_topologies', type=int, default=5000)
 parser.add_argument('--epsilon_rel', type=float, default=0.001)
 parser.add_argument('--no_uvnet_features', dest='use_uvnet_features', action='store_false')
 parser.add_argument('--use_uvnet_features', dest='use_uvnet_features', action='store_true')
+parser.add_argument('--dry_run', action='store_true')
 parser.set_defaults(use_uvnet_features=True)
 
 #penetration args:
@@ -40,11 +44,12 @@ parser.add_argument('--include_vertices', action='store_true')
 #axis args:
 parser.add_argument('--max_axis_groups',type=int, default=10)
 parser.add_argument('--save_mc_frames', action='store_true')
+parser.add_argument('--save_dirs',action='store_true')
 
 #check mates args:
 parser.add_argument('--validate_feasibility', action='store_true')
 parser.add_argument('--check_alternate_paths', action='store_true')
-parser.add_argument('--mc_path', type=str, default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/new_axes/axis_data', help='path to desired MC dataset')
+parser.add_argument('--mc_path', type=str, default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/new_axes_100groups/axis_data', help='path to desired MC dataset')
 
 args = parser.parse_args()
 
@@ -72,7 +77,7 @@ def main():
         batchpath = os.path.join(statspath, 'batches')
         if not os.path.isdir(batchpath):
             os.mkdir(batchpath)
-        action = BatchSaver(globaldata, batchpath, args.use_uvnet_features, args.epsilon_rel, args.max_topologies)
+        action = BatchSaver(globaldata, batchpath, args.use_uvnet_features, args.epsilon_rel, args.max_topologies, dry_run=args.dry_run)
 
     elif args.mode == Mode.PENETRATION:
         meshpath = os.path.join(args.dataroot, 'mesh')
@@ -82,10 +87,16 @@ def main():
         mc_path = os.path.join(statspath, 'axis_data')
         if not os.path.isdir(mc_path):
             os.mkdir(mc_path)
-        action = MCDataSaver(globaldata, mc_path, args.max_axis_groups, args.epsilon_rel, args.max_topologies, save_frames=args.save_mc_frames)
+        action = MCDataSaver(globaldata, mc_path, args.max_axis_groups, args.epsilon_rel, args.max_topologies, save_frames=args.save_mc_frames, save_dirs=args.save_dirs, dry_run=args.dry_run)
     
     elif args.mode == Mode.CHECK_MATES:
         action = MateChecker(globaldata, args.mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths)
+    
+    elif args.mode == Mode.SAVE_AXIS_AND_CHECK_MATES:
+        mc_path = os.path.join(statspath, 'axis_data')
+        if not os.path.isdir(mc_path):
+            os.mkdir(mc_path)
+        action = CombinedAxisMateChecker(globaldata, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run)
     
     dataset.map_data(action)
 
