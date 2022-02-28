@@ -11,7 +11,7 @@ from mechanical.data.dataloaders import Data
 from mechanical.utils import homogenize_frame, homogenize_sign, cs_from_origin_frame, cs_to_origin_frame, project_to_plane
 from mechanical.geometry import displaced_min_signed_distance, min_signed_distance_symmetric
 from mechanical.utils import joinmeshes
-from mechanical.data.util import df_to_mates, MateTypes, mates_equivalent
+from mechanical.utils import df_to_mates, MateTypes, mates_equivalent
 
 #import meshplot as mp
 #mp.offline()

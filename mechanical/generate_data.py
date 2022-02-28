@@ -13,7 +13,7 @@ from pspart import Part
 import h5py
 from scipy.spatial.transform import Rotation as R
 from utils import MateTypes, homogenize_frame, homogenize_sign, project_to_plane, EnumAction, cs_from_origin_frame, cs_to_origin_frame
-from mechanical.data.util import df_to_mates, mate_types, mates_equivalent
+from mechanical.utils import df_to_mates, mate_types, mates_equivalent
 class Mode(Enum):
     CHECK_BATCHES = "CHECK_BATCHES"
     CHECK_BOUNDS = "CHECK_BOUNDS"

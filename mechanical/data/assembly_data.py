@@ -8,8 +8,7 @@ import torch
 #from torch_geometric.data import Batch
 from pspart import NNHash
 import pspy
-from mechanical.utils import find_neighbors, inter_group_matches, cluster_points, homogenize_frame, external_adjacency_list_from_brepdata, compute_basis, apply_transform
-from mechanical.data.util import MateTypes, mate_types
+from mechanical.utils import find_neighbors, inter_group_matches, cluster_points, homogenize_frame, external_adjacency_list_from_brepdata, compute_basis, apply_transform, MateTypes, mate_types
 from scipy.spatial.transform import Rotation as R
 from automate import PartFeatures, part_to_graph, flatbatch
 import torch_scatter
@@ -18,7 +17,7 @@ import trimesh.interval as interval
 import trimesh
 import copy
 
-from mechanical.utils.utils import homogenize, homogenize_sign, inter_group_cluster_points, project_to_plane
+from mechanical.utils import homogenize, homogenize_sign, inter_group_cluster_points, project_to_plane
 
 def bboxes_overlap(bbox1, bbox2, margin=0):
     overlap = True

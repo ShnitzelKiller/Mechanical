@@ -3,7 +3,7 @@ from pspart import Part, MateConnector
 import pspy
 import os
 import numpy as np
-from utils import project_to_plane
+from mechanical.utils.transforms import project_to_plane
 
 def frame_from_mated_cs(mated_cs):
     origin = np.array(mated_cs['origin'])
