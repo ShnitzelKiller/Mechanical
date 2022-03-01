@@ -1,7 +1,8 @@
 from xml.etree.ElementInclude import include
 
 from attr import validate
-from mechanical.data import AssemblyLoader, Stats, MeshLoader, LoadMCData, compose
+from mechanical.data import Stats
+from mechanical.data.transforms import *
 import logging
 import os
 import h5py
@@ -364,3 +365,24 @@ class CombinedAxisMateChecker(DataVisitor):
         out_dict1 = self.axis_saver(data)
         out_dict2 = self.mate_checker(data)
         return {**out_dict1, **out_dict2}
+    
+
+class MCCountChecker(DataVisitor):
+    def __init__(self, mc_path, batch_path, individual):
+        self.transforms = compose(LoadMCData(mc_path), LoadBatch(batch_path))
+        self.individual = individual
+    
+    def process(self, data):
+        stat = Stats()
+        with h5py.File(data.mcfile,'r') as f:
+            counts = np.array(f['mc_counts'])
+        totalcount = counts.sum()
+        batch_totalcount = data.batch.mcfs.shape[0]
+        row = {'mc_count': totalcount, 'batch_mc_count': batch_totalcount, 'agrees': totalcount == batch_totalcount}
+        if self.individual:
+            batch_counts = [(data.batch.mcfs_batch == i).sum().item() for i in data.batch.mcfs_batch.unique()]
+            row['agrees'] = all([c1 == c2 for c1, c2 in zip(counts, batch_counts)])
+        stat.append(row, data.ind)
+        return {'mc_count_stats': stat}
+        
+        

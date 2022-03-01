@@ -19,6 +19,8 @@ import copy
 
 from mechanical.utils import homogenize, homogenize_sign, inter_group_cluster_points, project_to_plane
 
+DEFAULT_NUM_SAMPLES = 10
+
 def bboxes_overlap(bbox1, bbox2, margin=0):
     overlap = True
     marginarray = np.array([-margin, margin])
@@ -159,7 +161,7 @@ class AssemblyInfo:
             part_opts.transform = True
             part_opts.transform_matrix = mat
             part_opts.default_mcfs = self.include_mcfs
-            part_opts.num_uv_samples = 10 if self.use_uvnet_features else 0
+            part_opts.num_uv_samples = DEFAULT_NUM_SAMPLES if self.use_uvnet_features else 0
             logging.debug(f'loading transformed part {occ}')
             transformed_parts.append(pspy.Part(cached_part, part_opts))
 
@@ -793,6 +795,7 @@ class AssemblyInfo:
     def create_batches(self):
         options = PartFeatures()
         options.mcfs = self.include_mcfs
+        options.default_num_samples = DEFAULT_NUM_SAMPLES
         options.samples = self.use_uvnet_features
         datalist = [part_to_graph(part, options) for part in self.parts]
         return flatbatch(datalist)

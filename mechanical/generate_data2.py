@@ -14,6 +14,7 @@ class Mode(Enum):
     SAVE_AXIS_DATA = "SAVE_AXIS_DATA"
     CHECK_MATES = "CHECK_MATES"
     SAVE_AXIS_AND_CHECK_MATES = "SAVE_AXIS_AND_CHECK_MATES"
+    COMPARE_MC_COUNTS = "COMPARE_MC_COUNTS"
 
 parser = ArgumentParser()
 
@@ -46,10 +47,12 @@ parser.add_argument('--max_axis_groups',type=int, default=10)
 parser.add_argument('--save_mc_frames', action='store_true')
 parser.add_argument('--save_dirs',action='store_true')
 
-#check mates args:
+#check mates args/check mc args:
 parser.add_argument('--validate_feasibility', action='store_true')
 parser.add_argument('--check_alternate_paths', action='store_true')
-parser.add_argument('--mc_path', type=str, default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/new_axes_100groups/axis_data', help='path to desired MC dataset')
+parser.add_argument('--mc_path', type=str, default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/new_axes_100groups_and_mate_check/axis_data', help='path to desired MC dataset')
+parser.add_argument('--batch_path', type=str, default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/pspy_batches/batches', help='path to batch dataset, if checking those')
+parser.add_argument('--check_individual_part_mcs', action='store_true')
 
 args = parser.parse_args()
 
@@ -98,6 +101,9 @@ def main():
             os.mkdir(mc_path)
         action = CombinedAxisMateChecker(globaldata, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run)
     
+    elif args.mode == Mode.COMPARE_MC_COUNTS:
+        action = MCCountChecker(args.mc_path, args.batch_path, args.check_individual_part_mcs)
+
     dataset.map_data(action)
 
 

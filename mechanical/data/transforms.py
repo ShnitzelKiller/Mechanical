@@ -101,3 +101,11 @@ class LoadMCData:
     def __call__(self, data):
         data.mcfile = os.path.join(self.mc_path, f"{data.ind}.hdf5")
         return data
+
+class LoadBatch:
+    def __init__(self, batch_path):
+        self.batch_path = batch_path
+    
+    def __call__(self, data):
+        data.batch = torch.load(os.path.join(self.batch_path, f'{data.ind}.dat'))
+        return data
