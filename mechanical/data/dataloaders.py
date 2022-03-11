@@ -8,9 +8,11 @@ class Data:
         self.ind = ind
 
 class GlobalData:
-    def __init__(self):
+    def __init__(self, newmate_df_path='', mate_check_df_path=''):
         self.df_name = '/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5'
         self.updated_df_name = '/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5_segmentation.h5'
+        self.newmate_df_path = newmate_df_path
+        self.mate_check_df_path = mate_check_df_path
 
     @property
     def assembly_df(self):
@@ -39,6 +41,23 @@ class GlobalData:
             self._part_df.set_index('Assembly', inplace=True)
             logging.info('done')
         return self._part_df
+    
+    @property
+    def newmate_df(self):
+        if not hasattr(self, '_newmate_df'):
+            logging.info('Loading augmented mate data')
+            self._newmate_df = ps.read_parquet(self.mate_check_df_path)
+            self._newmate_df.set_index('Assembly', inplace=True)
+            logging.info('done')
+        return self._newmate_df
+    
+    @property
+    def mate_check_df(self):
+        if not hasattr(self, '_mate_check_df'):
+            logging.info('Loading augmented mate data')
+            self._mate_check_df = ps.read_parquet(self.mate_check_df_path)
+            logging.info('done')
+        return self._mate_check_df
 
 
 class Stats:

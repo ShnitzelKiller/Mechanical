@@ -17,7 +17,7 @@ import trimesh.interval as interval
 import trimesh
 import copy
 
-from mechanical.utils import homogenize, homogenize_sign, inter_group_cluster_points, project_to_plane
+from mechanical.utils import homogenize, homogenize_sign, inter_group_cluster_points, project_to_plane, cs_to_origin_frame, cs_from_origin_frame
 
 DEFAULT_NUM_SAMPLES = 10
 
@@ -81,10 +81,6 @@ class AssemblyInfo:
         self.part_caches = []
         self.occ_transforms = []
         self.occ_ids = []
-
-        self.mc_origins_all = []
-        self.mc_axes_all = []
-        self.mc_axes_homogenized_all = []
 
         #self.mco_hashes = [] #spatial hashes of origins
         #self.mcz_hashes = [] #spatial hashes of homogenized z direction
@@ -194,14 +190,18 @@ class AssemblyInfo:
             raise ValueError
         if not self.computed_data_structures:
             #analyze mate connectors
-            for tf,part in zip(self.part_transforms, self.parts):
+            self.mc_index_to_part = []
+            self.mc_origins_all = []
+            self.mc_axes_all = []
+            self.mc_axes_homogenized_all = []
+            for p, (tf,part) in enumerate(zip(self.part_transforms, self.parts)):
                 assert(part.is_valid)
                 mc_origins = []
                 mc_axes = []
-                for mc in part.default_mcfs:
+                for k,mc in enumerate(part.default_mcfs):
                     mc_origins.append(apply_transform(tf, mc.origin, is_points=True))
                     mc_axes.append(apply_transform(tf, mc.axis, is_points=False))
-
+                    self.mc_index_to_part.append((p, k))
                 self.mc_axes_all.append(mc_axes)
                 self.mc_origins_all.append(mc_origins)
                 mc_axes_homogenized = [homogenize_sign(vec)[0] for vec in mc_axes]
@@ -517,7 +517,7 @@ class AssemblyInfo:
         bboxes = []
         self.stats['num_degenerate_bboxes'] = 0
         for part in self.parts:
-            bbox = part.bounding_box()
+            bbox = part.summary.bounding_box
             if not part.is_valid:
                 self.stats['num_degenerate_bboxes'] += 1
             bboxes.append(bbox)
@@ -642,31 +642,38 @@ class AssemblyInfo:
                             #revolutes & cylindricals
                             projdist_old = np.dot(axis, origin)/norm2
                             projectedpt_old = origin - projdist_old * axis
-                            for k,ax in enumerate(axes_proposals):
-                                dir_homo, _ = homogenize_sign(ax[0])
+                            for ax in axes_proposals:
+                                p, a = self.mc_index_to_part[ax[0]]
+                                axdir = self.mc_axes_all[p][a]
+                                dir_homo, _ = homogenize_sign(axdir)
                                 if np.allclose(dir_homo, axis, rtol=0, atol=threshold):
-                                    mcf_origin = ax[1]
+                                    p, a = self.mc_index_to_part[ax[1]]
+                                    mcf_origin = self.mc_origins_all[p][a]
 
                                     projdist_mcf = np.dot(axis, mcf_origin)/norm2
                                     projectedpt_mcf = mcf_origin - projdist_mcf * axis
                                     if np.allclose(projectedpt_mcf, projectedpt_old, rtol=0, atol=threshold):
                                         found_mc_pair = True
-                                        out_dict['axis_index'] = k
+                                        out_dict['axis_index'] = ax[1]
                                         break
                         else:
                             #sliders
                             if require_axis:
-                                for k,ax in enumerate(axes_proposals):
-                                    dir_homo, _ = homogenize_sign(ax[0])
+                                for ax in axes_proposals:
+                                    p, a = self.mc_index_to_part[ax[0]]
+                                    axdir = self.mc_axes_all[p][a]
+                                    dir_homo, _ = homogenize_sign(axdir)
                                     if np.allclose(dir_homo, axis, rtol=0, atol=threshold):
                                         found_mc_pair = True
-                                        out_dict['axis_index'] = k
+                                        out_dict['axis_index'] = ax[1]
                             else:
-                                for k,dir in enumerate(dir_proposals):
-                                    dir_homo, _ = homogenize_sign(dir)
+                                for dir in enumerate(dir_proposals):
+                                    p, a = self.mc_index_to_part[dir]
+                                    dirdir = self.mc_axes_all[p][a]
+                                    dir_homo, _ = homogenize_sign(dirdir)
                                     if np.allclose(dir_homo, axis, rtol=0, atol=threshold):
                                         found_mc_pair = True
-                                        out_dict['dir_index'] = k
+                                        out_dict['dir_index'] = dir
                                         break
                     
                     if found_mc_pair:
@@ -779,8 +786,8 @@ class AssemblyInfo:
                         counts = {t2.value: sum(1 for t in pathinfo['chain_types'] if t == t2) for t2 in MateTypes}
                         stat = {**stat, **counts}
                         stat['chain_length'] = len(pathinfo['chain_types'])
-                        stat['axis'] = pathinfo['axis']
-                        stat['origin'] = pathinfo['origin']
+                        #stat['axis'] = pathinfo['axis']
+                        #stat['origin'] = pathinfo['origin']
                         stat['type'] = pathinfo['type']
                         stat['axis_index'] = pathinfo['axis_index']
                         stat['dir_index'] = pathinfo['dir_index']

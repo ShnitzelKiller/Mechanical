@@ -11,7 +11,7 @@ import torch
 from mechanical.data.dataloaders import Data
 from mechanical.utils import homogenize_frame, homogenize_sign, cs_from_origin_frame, cs_to_origin_frame, project_to_plane
 from mechanical.geometry import displaced_min_signed_distance, min_signed_distance_symmetric
-from mechanical.utils import joinmeshes
+from mechanical.utils import joinmeshes, mate_types
 from mechanical.utils import df_to_mates, MateTypes, mates_equivalent
 
 #import meshplot as mp
@@ -385,4 +385,189 @@ class MCCountChecker(DataVisitor):
         stat.append(row, data.ind)
         return {'mc_count_stats': stat}
         
+
+class DistanceChecker(DataVisitor):
+    def __init__(self, global_data, distance_threshold, append_pair_data, mc_path, epsilon_rel, max_topologies):
+        self.transforms = AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies)
+        self.global_data = global_data
+        self.distance_threshold = distance_threshold
+        self.append_pair_data = append_pair_data
+        self.mc_path = mc_path
+
+    def process(self, data):
+        all_mate_stats = Stats()
+        all_assembly_stats = Stats()
+
+        assembly_info = data.assembly_info
+        mate_subset = self.global_data.mate_df.loc[[data.ind]]
+        part_subset = self.global_data.part_df.loc[[data.ind]]
+
+        connections = {tuple(sorted((assembly_info.occ_to_index[mate_subset.iloc[l]['Part1']], assembly_info.occ_to_index[mate_subset.iloc[l]['Part2']]))): l for l in range(mate_subset.shape[0])}
+        proposals = assembly_info.mate_proposals(coincident_only=True)
+
+
+        distances = assembly_info.part_distances(self.distance_threshold)
         
+        if self.append_pair_data:
+            mcpath = os.path.join(self.mc_path, f'{data.ind}.hdf5')
+            if os.path.isfile(mcpath):
+                with h5py.File(mcpath,'r+') as f:
+                    pair_data = f['pair_data']
+                    for key in pair_data.keys():
+                        pair = tuple(sorted([int(k) for k in key.split(',')]))
+                        if pair in distances:
+                            pair_data[key].attrs['distance'] = distances[pair]
+                        else:
+                            pair_data[key].attrs['distance'] = np.inf
+
+        stat = assembly_info.stats
+
+        if assembly_info.stats['num_degenerate_bboxes'] == 0:
+            stat['num_unconnected_close'] = 0
+            stat['num_unconnected_coincident'] = 0
+            stat['num_unconnected_close_and_coincident'] = 0
+            stat['num_connected_far'] = 0
+            stat['num_connected_not_coincident'] = 0
+            stat['num_connected_far_or_not_coincident'] = 0
+            allpairs = {pair for pair in distances}.union({pair for pair in proposals})
+
+            for pair in allpairs:
+                comp1 = part_subset.iloc[pair[0]]['RigidComponentID']
+                comp2 = part_subset.iloc[pair[1]]['RigidComponentID']
+                if comp1 != comp2 and pair not in connections:
+                    if pair in distances and distances[pair] < self.distance_threshold:
+                        stat['num_unconnected_close'] += 1
+                    if pair in proposals:
+                        stat['num_unconnected_coincident'] += 1
+                    if pair in distances and distances[pair] < self.distance_threshold and pair in proposals:
+                        stat['num_unconnected_close_and_coincident'] += 1
+
+            
+            for pair in connections:
+                mate_stat = {'connected_far': False, 'connected_not_coincident': False}
+                if pair not in proposals or pair not in distances or distances[pair] >= self.distance_threshold:
+                    stat['num_connected_far_or_not_coincident'] += 1
+                if pair not in distances or distances[pair] >= self.distance_threshold:
+                    stat['num_connected_far'] += 1
+                    mate_stat['connected_far'] = True
+                if pair not in proposals:
+                    stat['num_connected_not_coincident'] += 1
+                    mate_stat['connected_not_coincident'] = True
+                mate_stat['type'] = mate_subset.iloc[connections[pair]]['Type']
+                mate_stat['assembly'] = data.ind
+                all_mate_stats.append(mate_stat, mate_subset.iloc[connections[pair]]['MateIndex'])
+        else:
+            stat['num_unconnected_close'] = -1
+            stat['num_unconnected_coincident'] = -1
+            stat['num_unconnected_close_and_coincident'] = -1
+            stat['num_connected_far'] = -1
+            stat['num_connected_not_coincident'] = -1
+            stat['num_connected_far_or_not_coincident'] = -1
+            
+        all_assembly_stats.append(stat, data.ind)
+
+        return {'assembly_distance_stats': all_assembly_stats, 'mate_distance_stats': all_mate_stats}
+
+
+class MateAugmentation(DataVisitor):
+    def __init__(self, global_data, mc_path, distance_threshold, require_axis, matched_axes_only, epsilon_rel, max_topologies):
+        self.transforms = AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies, precompute=True)
+        self.global_data = global_data
+        self.matched_axes_only = matched_axes_only
+        self.mc_path = mc_path
+        self.distance_threshold = distance_threshold
+        self.require_axis = require_axis
+
+    def process(self, data):
+        assembly_info = data.assembly_info
+        part_subset = self.global_data.part_df.loc[[data.ind]]
+        mate_subset = self.global_data.mate_df.loc[[data.ind]]
+        stats = Stats()
+        assstats = Stats()
+        if assembly_info.valid and len(assembly_info.parts) == part_subset.shape[0]:
+            mates = df_to_mates(mate_subset)
+
+            if self.matched_axes_only:
+                mcfile = os.path.join(self.mc_path, f'{data.ind}.hdf5')
+                pair_to_dirs, pair_to_axes = load_axes(mcfile)
+                
+                with h5py.File(mcfile,'r') as f:
+                    counts = np.array(f['mc_counts'])
+                assstats.append({'mc_counts_agree':all([count == len(axs) for count, axs in zip(counts, assembly_info.mc_axes_all)])}, data.ind)
+                stat = assembly_info.fill_missing_mates(mates, list(part_subset['RigidComponentID']), self.distance_threshold, pair_to_dirs=pair_to_dirs, pair_to_axes=pair_to_axes, require_axis=self.require_axis)
+            else: 
+                stat = assembly_info.fill_missing_mates(mates, list(part_subset['RigidComponentID']), self.distance_threshold)
+            for st in stat:
+                st['Assembly'] = data.ind
+            for st in stat:
+                stats.append(st)
+        return {'newmate_stats':stats, 'assembly_stats': assstats}
+
+class MateLabelSaver(DataVisitor):
+    def __init__(self, global_data, mc_path, augmented_labels, dry_run):
+        self.mc_path = mc_path
+        self.global_data = global_data
+        self.augmented_labels = augmented_labels
+        self.dry_run = dry_run
+
+    def process(self, data):
+        part_subset = self.global_data.part_df.loc[[data.ind]]
+        mate_subset = self.global_data.mate_df.loc[[data.ind]]
+        newmate_stats_df = self.global_data.newmate_df
+        mate_check_df = self.global_data.mate_check_df
+
+        h5fname = os.path.join(self.mc_path, f'{data.ind}.hdf5')
+        if os.path.isfile(h5fname):
+            rigid_comps = list(part_subset['RigidComponentID'])
+            if self.augmented_labels:
+                augmented_pairs_to_index = dict()
+                if data.ind in newmate_stats_df.index:
+                    newmate_subset = newmate_stats_df.loc[[data.ind]]
+                    for m in range(newmate_subset.shape[0]):
+                        part_indices = tuple(sorted([data.occ_to_index[newmate_subset.iloc[m][k]] for k in ['part1','part2']]))
+                        augmented_pairs_to_index[part_indices] = m
+            fmode = 'r' if self.dry_run else 'r+'
+            with h5py.File(h5fname,fmode) as f:
+                pair_data = f['pair_data']
+                for key in pair_data.keys():
+                    pair = tuple(sorted([int(k) for k in key.split(',')]))
+                    mateType = -1
+                    augmentedType = -1
+                    mateDirInd = -1
+                    mateAxisInd = -1
+                    augmentedDirInd = -1
+                    augmentedAxisInd = -1
+                    if pair in data.pair_to_index:
+                        mate_index = data.pair_to_index[pair]
+                        mateType = mate_types.index(mate_subset.iloc[mate_index]['Type'])
+                        mate_check_row = mate_check_df.loc[mate_subset.iloc[mate_index]['MateIndex']]
+                        mateDirInd = mate_check_row['dir_index']
+                        mateAxisInd = mate_check_row['axis_index']
+
+                    if self.augmented_labels:
+                        if pair in augmented_pairs_to_index:
+                            augmented_index = augmented_pairs_to_index[pair]
+                            if newmate_subset.iloc[augmented_index]['added_mate']:
+                                augmentedType = mate_types.index(newmate_subset.iloc[augmented_index]['type'])
+                                augmentedDirInd = newmate_subset.iloc[augmented_index]['dir_index']
+                                augmentedAxisInd = newmate_subset.iloc[augmented_index]['axis_index']
+                    
+                    #densify fasten mates
+                    if rigid_comps[pair[0]] == rigid_comps[pair[1]]:
+                        augmentedType = mate_types.index(MateTypes.FASTENED.value)
+
+                    if not DRY_RUN:
+                        if AUGMENTED_LABELS:
+                            pair_data[key].attrs['augmented_type'] = augmentedType
+                            pair_data[key].attrs['augmented_dirIndex'] = augmentedDirInd
+                            pair_data[key].attrs['augmented_axisIndex'] = augmentedAxisInd
+                        else:
+                            pair_data[key].attrs['type'] = mateType
+                            pair_data[key].attrs['dirIndex'] = mateDirInd
+                            pair_data[key].attrs['axisIndex'] = mateAxisInd
+                    else:
+                        assert(pair_data[key].attrs['type'] == mateType)
+                        assert(pair_data[key].attrs['dirIndex'] == mateDirInd)
+                        assert(pair_data[key].attrs['axisIndex'] == mateAxisInd)
+                        if augmentedType == mate_types.index(MateTypes.FASTENED.value):
+                            assert(pair_data[key].attrs['augmented_type'] == augmentedType)

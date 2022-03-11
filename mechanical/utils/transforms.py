@@ -1,5 +1,6 @@
 from numba import jit, njit
 import numpy as np
+import numpy.linalg as LA
 
 @njit
 def compute_basis(norm):

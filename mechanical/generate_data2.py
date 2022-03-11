@@ -15,6 +15,8 @@ class Mode(Enum):
     CHECK_MATES = "CHECK_MATES"
     SAVE_AXIS_AND_CHECK_MATES = "SAVE_AXIS_AND_CHECK_MATES"
     COMPARE_MC_COUNTS = "COMPARE_MC_COUNTS"
+    ANALYZE_DISTANCES = "ANALYZE_DISTANCES"
+    AUGMENT_MATES = "AUGMENT_MATES"
 
 parser = ArgumentParser()
 
@@ -53,6 +55,13 @@ parser.add_argument('--check_alternate_paths', action='store_true')
 parser.add_argument('--mc_path', type=str, default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/new_axes_100groups_and_mate_check/axis_data', help='path to desired MC dataset')
 parser.add_argument('--batch_path', type=str, default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/pspy_batches/batches', help='path to batch dataset, if checking those')
 parser.add_argument('--check_individual_part_mcs', action='store_true')
+
+#distance
+parser.add_argument('--distance_threshold',type=float, default=0.01)
+parser.add_argument('--append_pair_distance_data', action='store_true')
+
+#augmentation
+parser.add_argument('--require_axis', action='store_true', help='only augment mates that have a shared axis, not just direction even if a slider')
 
 args = parser.parse_args()
 
@@ -103,6 +112,12 @@ def main():
     
     elif args.mode == Mode.COMPARE_MC_COUNTS:
         action = MCCountChecker(args.mc_path, args.batch_path, args.check_individual_part_mcs)
+    
+    elif args.mode == Mode.ANALYZE_DISTANCES:
+        action = DistanceChecker(globaldata, args.distance_threshold, args.append_pair_distance_data, args.mc_path, args.epsilon_rel, args.max_topologies)
+
+    elif args.mode == Mode.AUGMENT_MATES:
+        action = MateAugmentation(globaldata, args.mc_path, args.distance_threshold, args.require_axis, True, args.epsilon_rel, args.max_topologies)
 
     dataset.map_data(action)
 
