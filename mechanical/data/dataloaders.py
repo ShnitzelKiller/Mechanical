@@ -8,11 +8,13 @@ class Data:
         self.ind = ind
 
 class GlobalData:
-    def __init__(self, newmate_df_path='', mate_check_df_path=''):
+    def __init__(self, newmate_df_path='', mate_check_df_path='', distance_df_path='', pspy_df_path=''):
         self.df_name = '/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5'
         self.updated_df_name = '/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5_segmentation.h5'
         self.newmate_df_path = newmate_df_path
         self.mate_check_df_path = mate_check_df_path
+        self.distance_df_path = distance_df_path
+        self.pspy_df_path = pspy_df_path
 
     @property
     def assembly_df(self):
@@ -46,7 +48,7 @@ class GlobalData:
     def newmate_df(self):
         if not hasattr(self, '_newmate_df'):
             logging.info('Loading augmented mate data')
-            self._newmate_df = ps.read_parquet(self.mate_check_df_path)
+            self._newmate_df = ps.read_parquet(self.newmate_df_path)
             self._newmate_df.set_index('Assembly', inplace=True)
             logging.info('done')
         return self._newmate_df
@@ -58,6 +60,22 @@ class GlobalData:
             self._mate_check_df = ps.read_parquet(self.mate_check_df_path)
             logging.info('done')
         return self._mate_check_df
+    
+    @property
+    def distance_df(self):
+        if not hasattr(self, '_distance_df'):
+            logging.info('Loading distance data')
+            self._distance_df = ps.read_parquet(self.distance_stats_df)
+            logging.info('done')
+        return self._distance_df
+    
+    @property
+    def pspy_df(self):
+        if not hasattr(self, '_pspy_df'):
+            logging.info('Loading pspy/torch generation stats')
+            self._pspy_df = ps.read_parquet(self.pspy_df_path)
+            logging.info('done')
+        return self._pspy_df
 
 
 class Stats:

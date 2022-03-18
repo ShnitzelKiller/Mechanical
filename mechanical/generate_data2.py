@@ -8,6 +8,7 @@ from mechanical.data.data_stats import *
 from enum import Enum
 from mechanical.utils import EnumAction
 import math
+import random
 class Mode(Enum):
     SAVE_BATCHES = "SAVE_BATCHES"
     PENETRATION = "PENETRATION"
@@ -17,6 +18,8 @@ class Mode(Enum):
     COMPARE_MC_COUNTS = "COMPARE_MC_COUNTS"
     ANALYZE_DISTANCES = "ANALYZE_DISTANCES"
     AUGMENT_MATES = "AUGMENT_MATES"
+    ADD_MATE_LABELS = "ADD_MATE_LABELS"
+    FINALIZE_DATASET = "FINALIZE_DATASET"
 
 parser = ArgumentParser()
 
@@ -63,6 +66,16 @@ parser.add_argument('--append_pair_distance_data', action='store_true')
 #augmentation
 parser.add_argument('--require_axis', action='store_true', help='only augment mates that have a shared axis, not just direction even if a slider')
 
+#ground truth labeling
+#finalize dataset
+parser.add_argument('--newmate_df_path',default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/new_augmented_mates/newmate_stats.parquet')
+parser.add_argument('--mate_check_df_path',default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/new_axes_100groups_and_mate_check/mate_check_stats.parquet')
+parser.add_argument('--pspy_df_path', default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/pspy_batches/assembly_stats.parquet')
+parser.add_argument('--augmented_labels', action='store_true')
+parser.add_argument('--seed', type=int, default=1234)
+parser.add_argument('--split', nargs=3, type=int)
+
+
 args = parser.parse_args()
 
 def main():
@@ -83,7 +96,7 @@ def main():
     logging.info(f'args: {args}')
 
     dataset = Dataset(args.index_file, args.stride, statspath, args.start_index, args.stop_index)
-    globaldata = GlobalData()
+    globaldata = GlobalData(mate_check_df_path=args.mate_check_df_path, newmate_df_path=args.newmate_df_path, pspy_df_path=args.pspy_df_path)
 
     if args.mode == Mode.SAVE_BATCHES:
         batchpath = os.path.join(statspath, 'batches')
@@ -118,9 +131,35 @@ def main():
 
     elif args.mode == Mode.AUGMENT_MATES:
         action = MateAugmentation(globaldata, args.mc_path, args.distance_threshold, args.require_axis, True, args.epsilon_rel, args.max_topologies)
+    
+    elif args.mode == Mode.ADD_MATE_LABELS:
+        action = MateLabelSaver(globaldata, args.mc_path, args.augmented_labels, args.dry_run)
+    
+    elif args.mode == Mode.FINALIZE_DATASET:
+        action = DataChecker(globaldata, args.mc_path, args.batch_path, args.distance_threshold)
 
     dataset.map_data(action)
 
+    if args.mode == Mode.FINALIZE_DATASET:
+        final_df = ps.read_parquet(os.path.join(args.dataroot, args.name, 'final_stat.parquet'))
+        datalist = list(final_df[lambda df: df['valid']].index)
+        random.seed(args.seed)
+        random.shuffle(datalist)
+
+        split = args.split
+        N = len(datalist)
+        splittotal = sum(split)
+        train_i = int(split[0] / splittotal * N)
+        test_i = int((split[0] + split[1]) / splittotal * N)
+
+        with open(os.path.join(args.dataroot, args.name, 'train.txt'),'w') as f:
+            f.writelines([str(l) + '\n' for l in datalist[:train_i]])
+        
+        with open(os.path.join(args.dataroot, args.name, 'test.txt'),'w') as f:
+            f.writelines([str(l) + '\n' for l in datalist[train_i:test_i]])
+        
+        with open(os.path.join(args.dataroot, args.name, 'validation.txt'),'w') as f:
+            f.writelines([str(l) + '\n' for l in datalist[test_i:]])
 
 
 if __name__ == '__main__':

@@ -33,11 +33,11 @@ def mesh_overlap_volume(meshes, axis, quality=100):
     return intersection, smallest
 
 
-def displaced_min_signed_distance(meshes, axis, origin=None, motion_type='SLIDE', samples=100, displacement=0.01, include_vertices=False):
+def motion_meshes(meshes, axis, origin, motion_type, displacement):
     """
-    compute the amount of overlap between meshes after motion of type [ROTATE|SLIDE] is applied along the
-    specified axis.
+    given a pair of meshes, return another pair of meshes displaced relative to each other based on motion type
     """
+
     meshes = sorted(meshes, key=lambda x: x[0].shape[0])
     #p = mp.plot(*meshes[0])
     if motion_type == 'ROTATE':
@@ -48,6 +48,15 @@ def displaced_min_signed_distance(meshes, axis, origin=None, motion_type='SLIDE'
         meshes[0] = (meshes[0][0] + axis * displacement, meshes[0][1])
     else:
         raise ValueError
+    return meshes
+
+
+def displaced_min_signed_distance(meshes, axis, origin=None, motion_type='SLIDE', samples=100, displacement=0.01, include_vertices=False):
+    """
+    compute the amount of overlap between meshes after motion of type [ROTATE|SLIDE] is applied along the
+    specified axis.
+    """
+    meshes = motion_meshes(meshes, axis, origin, motion_type, displacement=displacement)
     #p.add_mesh(*meshes[0])
     #p.add_mesh(*meshes[1])
     #if motion_type == 'ROTATE':

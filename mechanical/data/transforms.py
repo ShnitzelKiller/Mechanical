@@ -37,7 +37,7 @@ class MeshLoader:
         return data
 
 class AssemblyLoader:
-    def __init__(self, global_data, datapath='/projects/grail/benjones/cadlab', use_uvnet_features=False, epsilon_rel=0.001, max_topologies=5000, pair_data=False, include_mcfs=True, precompute=False):
+    def __init__(self, global_data, datapath='/projects/grail/benjones/cadlab', use_uvnet_features=False, epsilon_rel=0.001, max_topologies=5000, pair_data=False, include_mcfs=True, precompute=False, load_geometry=True):
         self.global_data = global_data
         self.datapath = datapath
         self.use_uvnet_features = use_uvnet_features
@@ -46,6 +46,7 @@ class AssemblyLoader:
         self.pair_data = pair_data
         self.include_mcfs = include_mcfs
         self.precompute = precompute
+        self.load_geometry = load_geometry
 
 
     def __call__(self, data):
@@ -60,30 +61,36 @@ class AssemblyLoader:
         #if args.mode == 'generate':
         with open(os.path.join(self.datapath, 'data/flattened_assemblies', self.global_data.assembly_df.loc[data.ind, "AssemblyPath"] + '.json')) as f:
             assembly_def = json.load(f)
-        part_occs = assembly_def['part_occurrences']
-        tf_dict = dict()
-        for occ in part_occs:
-            tf = np.array(occ['transform']).reshape(4, 4)
-            # npyname = f'/fast/jamesn8/assembly_data/transform64_cache/{data.ind}.npy'
-            # if not os.path.isfile(npyname):
-            #     np.save(npyname, tf)
-            tf_dict[occ['id']] = tf
 
-        for j in range(part_subset.shape[0]):
-            rel_path = os.path.join(*[part_subset.iloc[j][k] for k in ['did','mv','eid','config']], f'{part_subset.iloc[j]["PartId"]}.xt')
-            path = os.path.join(self.datapath, 'data/models', rel_path)
-            assert(os.path.isfile(path))
-            rel_part_paths.append(rel_path)
-            part_paths.append(path)
-            #if args.mode == 'generate':
-            transforms.append(tf_dict[occ_ids[j]])
-            #else:
-            #    transforms.append(part_subset.iloc[j]['Transform'])
-        
+        part_occs = assembly_def['part_occurrences']
         occ_to_index = dict()
         for i,occ in enumerate(occ_ids):
             occ_to_index[occ] = i
-        data.assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, epsilon_rel=self.epsilon_rel, use_uvnet_features=self.use_uvnet_features, max_topologies=self.max_topologies, include_mcfs=self.include_mcfs, precompute=self.precompute)
+        
+        if self.load_geometry:
+            tf_dict = dict()
+            for occ in part_occs:
+                tf = np.array(occ['transform']).reshape(4, 4)
+                # npyname = f'/fast/jamesn8/assembly_data/transform64_cache/{data.ind}.npy'
+                # if not os.path.isfile(npyname):
+                #     np.save(npyname, tf)
+                tf_dict[occ['id']] = tf
+
+            for j in range(part_subset.shape[0]):
+                rel_path = os.path.join(*[part_subset.iloc[j][k] for k in ['did','mv','eid','config']], f'{part_subset.iloc[j]["PartId"]}.xt')
+                path = os.path.join(self.datapath, 'data/models', rel_path)
+                assert(os.path.isfile(path))
+                rel_part_paths.append(rel_path)
+                part_paths.append(path)
+                #if args.mode == 'generate':
+                transforms.append(tf_dict[occ_ids[j]])
+                #else:
+                #    transforms.append(part_subset.iloc[j]['Transform'])
+            
+            data.assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, epsilon_rel=self.epsilon_rel, use_uvnet_features=self.use_uvnet_features, max_topologies=self.max_topologies, include_mcfs=self.include_mcfs, precompute=self.precompute)
+        else:
+            data.occ_to_index = occ_to_index
+        
         if self.pair_data:
             pair_to_index = dict()
             mate_subset = self.global_data.mate_df.loc[[data.ind]]
