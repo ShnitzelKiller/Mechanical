@@ -367,12 +367,14 @@ class CombinedAxisMateChecker(DataVisitor):
         return {**out_dict1, **out_dict2}
     
 
-class CombinedAxisMateCheckAndAugment(DataVisitor):
-    def __init__(self, global_data, mc_path, epsilon_rel, max_topologies, validate_feasibility=False, check_alternate_paths=False, max_axis_groups=10, save_frames=False, save_dirs=True, dry_run=False, distance_threshold=.01, require_axis=True, matched_axes_only=True):
-        self.mate_checker = MateChecker(global_data, mc_path, epsilon_rel, max_topologies, validate_feasibility=validate_feasibility, check_alternate_paths=check_alternate_paths)
+class CombinedAxisBatchAugment(DataVisitor):
+    def __init__(self, global_data, mc_path, batch_path, epsilon_rel, max_topologies, validate_feasibility=False, check_alternate_paths=False, max_axis_groups=10, save_frames=False, save_dirs=True, dry_run=False, distance_threshold=.01, require_axis=True, matched_axes_only=True, use_uvnet_features=True):
+        self.transforms = [LoadMCData(mc_path), AssemblyLoader(global_data, use_uvnet_features=use_uvnet_features, epsilon_rel=epsilon_rel, max_topologies=max_topologies, precompute=True)]
+        
+        self.batch_saver = BatchSaver(global_data, batch_path, use_uvnet_features, epsilon_rel, max_topologies, dry_run)
         self.axis_saver = MCDataSaver(global_data, mc_path, max_axis_groups, epsilon_rel, max_topologies, save_frames=save_frames, save_dirs=save_dirs, dry_run=dry_run)
+        self.mate_checker = MateChecker(global_data, mc_path, epsilon_rel, max_topologies, validate_feasibility=validate_feasibility, check_alternate_paths=check_alternate_paths)
         self.augmenter = MateAugmentation(global_data, mc_path, distance_threshold, require_axis, matched_axes_only, epsilon_rel, max_topologies)
-        self.transforms = self.mate_checker.transforms
     
     def process(self, data):
         out_dict1 = self.axis_saver(data)

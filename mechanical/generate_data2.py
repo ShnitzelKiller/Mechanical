@@ -49,7 +49,7 @@ parser.add_argument('--num_samples',type=int, default=100)
 parser.add_argument('--include_vertices', action='store_true')
 
 #axis args:
-parser.add_argument('--max_axis_groups',type=int, default=10)
+parser.add_argument('--max_axis_groups',type=int, default=100)
 parser.add_argument('--save_mc_frames', action='store_true')
 parser.add_argument('--save_dirs',action='store_true')
 
@@ -69,9 +69,9 @@ parser.add_argument('--require_axis', action='store_true', help='only augment ma
 
 #ground truth labeling
 #finalize dataset
-parser.add_argument('--newmate_df_path',default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/new_augmented_mates/newmate_stats.parquet')
-parser.add_argument('--mate_check_df_path',default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/new_axes_100groups_and_mate_check/mate_check_stats.parquet')
-parser.add_argument('--pspy_df_path', default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/pspy_batches/assembly_stats.parquet')
+parser.add_argument('--newmate_df_path',default='')
+parser.add_argument('--mate_check_df_path',default='')
+parser.add_argument('--pspy_df_path', default='')
 parser.add_argument('--augmented_labels', action='store_true')
 parser.add_argument('--seed', type=int, default=1234)
 parser.add_argument('--split', nargs=3, type=int)
@@ -132,7 +132,8 @@ def main():
         batchpath = os.path.join(statspath, 'batches')
         if not os.path.isdir(batchpath):
             os.mkdir(batchpath)
-        action = CombinedAxisMateCheckAndAugment(globaldata, mc_path, batchpath, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run, distance_threshold=args.distance_threshold, require_axis=args.require_axis, use_uvnet_features=args.use_uvnet_features)
+        
+        action = CombinedAxisBatchAugment(globaldata, mc_path, batchpath, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run, distance_threshold=args.distance_threshold, require_axis=args.require_axis, use_uvnet_features=args.use_uvnet_features)
 
     elif args.mode == Mode.COMPARE_MC_COUNTS:
         action = MCCountChecker(args.mc_path, args.batch_path, args.check_individual_part_mcs)
