@@ -667,7 +667,7 @@ class AssemblyInfo:
                                         found_mc_pair = True
                                         out_dict['axis_index'] = ax[1]
                             else:
-                                for dir in enumerate(dir_proposals):
+                                for dir in dir_proposals:
                                     p, a = self.mc_index_to_part[dir]
                                     dirdir = self.mc_axes_all[p][a]
                                     dir_homo, _ = homogenize_sign(dirdir)

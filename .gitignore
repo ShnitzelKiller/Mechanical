@@ -6,4 +6,5 @@ __pycache__/
 *.h5
 data/dataset/
 data/pointclouds/
+data/backups/
 *.env

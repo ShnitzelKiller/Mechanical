@@ -2,6 +2,7 @@ import os
 import pandas as ps
 import logging
 import random
+from .transforms import compose
 
 class Data:
     def __init__(self, ind):
@@ -158,7 +159,8 @@ class Dataset:
         for i,ind in enumerate(self.index[self.start_index:self.stop_index]):
             logging.info(f'processing {i+self.start_index}/{len(self.index)} ({ind})')
             data = Data(ind)
-            data = action.transforms(data)
+            transforms = compose(*action.transforms)
+            data = transforms(data)
             results = action(data)
             if results is not None:
                 self.log_results(results)

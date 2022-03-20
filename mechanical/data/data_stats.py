@@ -29,7 +29,7 @@ class NoopVisitor(DataVisitor):
 
 class BatchSaver(DataVisitor):
     def __init__(self, global_data, out_path, use_uvnet_features, epsilon_rel, max_topologies, dry_run):
-        self.transforms = AssemblyLoader(global_data, use_uvnet_features=use_uvnet_features, epsilon_rel=epsilon_rel, max_topologies=max_topologies)
+        self.transforms = [AssemblyLoader(global_data, use_uvnet_features=use_uvnet_features, epsilon_rel=epsilon_rel, max_topologies=max_topologies)]
         self.out_path = out_path
         self.dry_run = dry_run
 
@@ -48,7 +48,7 @@ class BatchSaver(DataVisitor):
 
 class DisplacementPenalty(DataVisitor):
     def __init__(self, global_data, sliding_distance, rotation_angle, num_samples, include_vertices, meshpath):
-        self.transforms = MeshLoader(meshpath)
+        self.transforms = [MeshLoader(meshpath)]
         self.global_data = global_data
         self.sliding_distance = sliding_distance
         self.rotation_angle = rotation_angle
@@ -140,7 +140,7 @@ class DisplacementPenalty(DataVisitor):
 
 class MCDataSaver(DataVisitor):
     def __init__(self, global_data, mc_path, max_axis_groups, epsilon_rel, max_topologies, save_frames=False, save_dirs=False, dry_run=False):
-        self.transforms = AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies)
+        self.transforms = [AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies)]
         self.max_groups = max_axis_groups
         self.mc_path = mc_path
         self.save_frames = save_frames
@@ -222,7 +222,7 @@ def load_axes(path):
 
 class MateChecker(DataVisitor):
     def __init__(self, global_data, mc_path, epsilon_rel, max_topologies, validate_feasibility=False, check_alternate_paths=False):
-        self.transforms = compose(LoadMCData(mc_path), AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies, precompute=True))
+        self.transforms = [LoadMCData(mc_path), AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies, precompute=True)]
         self.global_data = global_data
         self.epsilon_rel = epsilon_rel
         self.validate_feasibility = validate_feasibility
@@ -231,8 +231,8 @@ class MateChecker(DataVisitor):
     def process(self, data):
         mate_stats = Stats()
         all_stats = Stats()
-        mate_subset = self.global_data.mate_df.loc[data.ind]
-        part_subset = self.global_data.part_df.loc[data.ind]
+        mate_subset = self.global_data.mate_df.loc[[data.ind]]
+        part_subset = self.global_data.part_df.loc[[data.ind]]
         allowed_mates = {MateTypes.FASTENED.value, MateTypes.REVOLUTE.value, MateTypes.CYLINDRICAL.value, MateTypes.SLIDER.value}
 
         num_discrepant_mc_counts = 0
@@ -367,9 +367,23 @@ class CombinedAxisMateChecker(DataVisitor):
         return {**out_dict1, **out_dict2}
     
 
+class CombinedAxisMateCheckAndAugment(DataVisitor):
+    def __init__(self, global_data, mc_path, epsilon_rel, max_topologies, validate_feasibility=False, check_alternate_paths=False, max_axis_groups=10, save_frames=False, save_dirs=True, dry_run=False, distance_threshold=.01, require_axis=True, matched_axes_only=True):
+        self.mate_checker = MateChecker(global_data, mc_path, epsilon_rel, max_topologies, validate_feasibility=validate_feasibility, check_alternate_paths=check_alternate_paths)
+        self.axis_saver = MCDataSaver(global_data, mc_path, max_axis_groups, epsilon_rel, max_topologies, save_frames=save_frames, save_dirs=save_dirs, dry_run=dry_run)
+        self.augmenter = MateAugmentation(global_data, mc_path, distance_threshold, require_axis, matched_axes_only, epsilon_rel, max_topologies)
+        self.transforms = self.mate_checker.transforms
+    
+    def process(self, data):
+        out_dict1 = self.axis_saver(data)
+        out_dict2 = self.mate_checker(data)
+        out_dict3 = self.augmenter(data)
+        return {**out_dict1, **out_dict2, **out_dict3}
+    
+
 class MCCountChecker(DataVisitor):
     def __init__(self, mc_path, batch_path, individual):
-        self.transforms = compose(LoadMCData(mc_path), LoadBatch(batch_path))
+        self.transforms = [LoadMCData(mc_path), LoadBatch(batch_path)]
         self.individual = individual
     
     def process(self, data):
@@ -388,7 +402,7 @@ class MCCountChecker(DataVisitor):
 
 class DistanceChecker(DataVisitor):
     def __init__(self, global_data, distance_threshold, append_pair_data, mc_path, epsilon_rel, max_topologies):
-        self.transforms = AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies)
+        self.transforms = [AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies)]
         self.global_data = global_data
         self.distance_threshold = distance_threshold
         self.append_pair_data = append_pair_data
@@ -471,7 +485,7 @@ class DistanceChecker(DataVisitor):
 
 class MateAugmentation(DataVisitor):
     def __init__(self, global_data, mc_path, distance_threshold, require_axis, matched_axes_only, epsilon_rel, max_topologies):
-        self.transforms = AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies, precompute=True)
+        self.transforms = [AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies, precompute=True)]
         self.global_data = global_data
         self.matched_axes_only = matched_axes_only
         self.mc_path = mc_path
@@ -505,7 +519,7 @@ class MateAugmentation(DataVisitor):
 
 class MateLabelSaver(DataVisitor):
     def __init__(self, global_data, mc_path, augmented_labels, dry_run):
-        self.transforms = AssemblyLoader(global_data, load_geometry=False, pair_data=True)
+        self.transforms = [AssemblyLoader(global_data, load_geometry=False, pair_data=True)]
         self.mc_path = mc_path
         self.global_data = global_data
         self.augmented_labels = augmented_labels
@@ -582,7 +596,7 @@ class MateLabelSaver(DataVisitor):
 
 class DataChecker(DataVisitor):
     def __init__(self, global_data, mc_path, torch_path, distance_threshold):
-        self.transforms = AssemblyLoader(global_data, load_geometry=False, pair_data=True)
+        self.transforms = [AssemblyLoader(global_data, load_geometry=False, pair_data=True)]
         self.mc_path = mc_path
         self.torch_path = torch_path
         self.global_data = global_data
@@ -606,7 +620,9 @@ class DataChecker(DataVisitor):
         
         has_mate_check = data.ind in self.mate_check_df.index
 
-        row = {'has_mate_check': has_mate_check, 'attempted_augmentation': data.ind in newmate_df.index, 'pspy_initialized': pspy_initialized, 'pspy_valid': pspy_valid}
+        num_attempted_augments = 0 if data.ind not in newmate_df.index else newmate_df.loc[[data.ind]].shape[0]
+
+        row = {'has_mate_check': has_mate_check, 'attempted_augmentation': num_attempted_augments, 'pspy_initialized': pspy_initialized, 'pspy_valid': pspy_valid}
         if has_mate_check:
             row['all_mates_valid'] = self.mate_check_df.loc[[data.ind],'valid'].all()
 

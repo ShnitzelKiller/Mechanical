@@ -15,6 +15,7 @@ class Mode(Enum):
     SAVE_AXIS_DATA = "SAVE_AXIS_DATA"
     CHECK_MATES = "CHECK_MATES"
     SAVE_AXIS_AND_CHECK_MATES = "SAVE_AXIS_AND_CHECK_MATES"
+    SAVE_AXIS_AND_CHECK_AND_AUGMENT_MATES = "SAVE_AXIS_AND_CHECK_AND_AUGMENT_MATES"
     COMPARE_MC_COUNTS = "COMPARE_MC_COUNTS"
     ANALYZE_DISTANCES = "ANALYZE_DISTANCES"
     AUGMENT_MATES = "AUGMENT_MATES"
@@ -123,6 +124,16 @@ def main():
             os.mkdir(mc_path)
         action = CombinedAxisMateChecker(globaldata, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run)
     
+    elif args.mode == Mode.SAVE_AXIS_AND_CHECK_AND_AUGMENT_MATES:
+        mc_path = os.path.join(statspath, 'axis_data')
+        if not os.path.isdir(mc_path):
+            os.mkdir(mc_path)
+        
+        batchpath = os.path.join(statspath, 'batches')
+        if not os.path.isdir(batchpath):
+            os.mkdir(batchpath)
+        action = CombinedAxisMateCheckAndAugment(globaldata, mc_path, batchpath, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run, distance_threshold=args.distance_threshold, require_axis=args.require_axis, use_uvnet_features=args.use_uvnet_features)
+
     elif args.mode == Mode.COMPARE_MC_COUNTS:
         action = MCCountChecker(args.mc_path, args.batch_path, args.check_individual_part_mcs)
     
