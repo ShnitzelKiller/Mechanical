@@ -116,3 +116,11 @@ class LoadBatch:
     def __call__(self, data):
         data.batch = torch.load(os.path.join(self.batch_path, f'{data.ind}.dat'))
         return data
+
+class ComputeDistances:
+    def __init__(self, distance_threshold):
+        self.distance_threshold = distance_threshold
+
+    def __call__(self, data):
+        data.distances = data.assembly_info.part_distances(self.distance_threshold)
+        return data

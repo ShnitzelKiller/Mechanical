@@ -15,7 +15,7 @@ class Mode(Enum):
     SAVE_AXIS_DATA = "SAVE_AXIS_DATA"
     CHECK_MATES = "CHECK_MATES"
     SAVE_AXIS_AND_CHECK_MATES = "SAVE_AXIS_AND_CHECK_MATES"
-    SAVE_AXIS_AND_CHECK_AND_AUGMENT_MATES = "SAVE_AXIS_AND_CHECK_AND_AUGMENT_MATES"
+    FULL_PIPELINE = "FULL_PIPELINE"
     COMPARE_MC_COUNTS = "COMPARE_MC_COUNTS"
     ANALYZE_DISTANCES = "ANALYZE_DISTANCES"
     AUGMENT_MATES = "AUGMENT_MATES"
@@ -56,25 +56,31 @@ parser.add_argument('--save_dirs',action='store_true')
 #check mates args/check mc args:
 parser.add_argument('--validate_feasibility', action='store_true')
 parser.add_argument('--check_alternate_paths', action='store_true')
-parser.add_argument('--mc_path', type=str, default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/new_axes_100groups_and_mate_check/axis_data', help='path to desired MC dataset')
-parser.add_argument('--batch_path', type=str, default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/pspy_batches/batches', help='path to batch dataset, if checking those')
-parser.add_argument('--check_individual_part_mcs', action='store_true')
+parser.add_argument('--mc_path', type=str, default=None, help='path to desired MC dataset')
+parser.add_argument('--batch_path', type=str, default=None, help='path to batch dataset, if checking those')
+parser.add_argument('--check_individual_part_mcs', dest='check_individual_part_mcs', action='store_true')
+parser.add_argument('--no_individual_part_mcs', dest='check_individual_part_mcs', action='store_false')
+parser.set_defaults(check_individual_part_mcs=True)
 
 #distance
 parser.add_argument('--distance_threshold',type=float, default=0.01)
-parser.add_argument('--append_pair_distance_data', action='store_true')
+parser.add_argument('--append_pair_distance_data', dest='append_pair_distance_data', action='store_true')
+parser.add_argument('--no_append_pair_distance_data', dest='append_pair_distance_data', action='store_false')
+parser.set_defaults(append_pair_distance_data=True)
 
 #augmentation
-parser.add_argument('--require_axis', action='store_true', help='only augment mates that have a shared axis, not just direction even if a slider')
+parser.add_argument('--require_axis', action='store_true', dest='require_axis', help='only augment mates that have a shared axis, not just direction even if a slider')
+parser.add_argument('--no_require_axis', dest='require_axis', action='store_true')
+parser.set_defaults(require_axis=True)
 
 #ground truth labeling
 #finalize dataset
-parser.add_argument('--newmate_df_path',default='')
-parser.add_argument('--mate_check_df_path',default='')
-parser.add_argument('--pspy_df_path', default='')
+parser.add_argument('--newmate_df_path',default=None)
+parser.add_argument('--mate_check_df_path',default=None)
+parser.add_argument('--pspy_df_path', default=None)
 parser.add_argument('--augmented_labels', action='store_true')
 parser.add_argument('--seed', type=int, default=1234)
-parser.add_argument('--split', nargs=3, type=int)
+parser.add_argument('--split', nargs=3, type=int, default=[8, 1, 1])
 
 
 args = parser.parse_args()
@@ -97,7 +103,15 @@ def main():
     logging.info(f'args: {args}')
 
     dataset = Dataset(args.index_file, args.stride, statspath, args.start_index, args.stop_index)
-    globaldata = GlobalData(mate_check_df_path=args.mate_check_df_path, newmate_df_path=args.newmate_df_path, pspy_df_path=args.pspy_df_path)
+
+    mate_check_df_path = args.mate_check_df_path if args.mate_check_df_path is not None else os.path.join(statspath, 'mate_check_stats.parquet')
+    newmate_df_path = args.newmate_df_path if args.newmate_df_path is not None else os.path.join(statspath, 'newmate_stats.parquet')
+    pspy_df_path = args.pspy_df_path if args.pspy_df_path is not None else os.path.join(statspath, 'pspy_stats.parquet')
+    mc_path = args.mc_path if args.mc_path is not None else os.path.join(statspath, 'axis_data')
+    batch_path = args.batch_path if args.batch_path is not None else os.path.join(statspath, 'batches')
+
+
+    globaldata = GlobalData(mate_check_df_path=mate_check_df_path, newmate_df_path=newmate_df_path, pspy_df_path=pspy_df_path)
 
     if args.mode == Mode.SAVE_BATCHES:
         batchpath = os.path.join(statspath, 'batches')
@@ -116,7 +130,7 @@ def main():
         action = MCDataSaver(globaldata, mc_path, args.max_axis_groups, args.epsilon_rel, args.max_topologies, save_frames=args.save_mc_frames, save_dirs=args.save_dirs, dry_run=args.dry_run)
     
     elif args.mode == Mode.CHECK_MATES:
-        action = MateChecker(globaldata, args.mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths)
+        action = MateChecker(globaldata, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths)
     
     elif args.mode == Mode.SAVE_AXIS_AND_CHECK_MATES:
         mc_path = os.path.join(statspath, 'axis_data')
@@ -124,7 +138,7 @@ def main():
             os.mkdir(mc_path)
         action = CombinedAxisMateChecker(globaldata, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run)
     
-    elif args.mode == Mode.SAVE_AXIS_AND_CHECK_AND_AUGMENT_MATES:
+    elif args.mode == Mode.FULL_PIPELINE:
         mc_path = os.path.join(statspath, 'axis_data')
         if not os.path.isdir(mc_path):
             os.mkdir(mc_path)
@@ -133,26 +147,35 @@ def main():
         if not os.path.isdir(batchpath):
             os.mkdir(batchpath)
         
-        action = CombinedAxisBatchAugment(globaldata, mc_path, batchpath, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run, distance_threshold=args.distance_threshold, require_axis=args.require_axis, use_uvnet_features=args.use_uvnet_features)
+        action = CombinedAxisBatchAugment(globaldata, mc_path, batchpath, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run, distance_threshold=args.distance_threshold, require_axis=args.require_axis, use_uvnet_features=args.use_uvnet_features, append_pair_data=args.append_pair_distance_data)
 
     elif args.mode == Mode.COMPARE_MC_COUNTS:
-        action = MCCountChecker(args.mc_path, args.batch_path, args.check_individual_part_mcs)
+        action = MCCountChecker(mc_path, batch_path, args.check_individual_part_mcs)
     
     elif args.mode == Mode.ANALYZE_DISTANCES:
-        action = DistanceChecker(globaldata, args.distance_threshold, args.append_pair_distance_data, args.mc_path, args.epsilon_rel, args.max_topologies)
+        action = DistanceChecker(globaldata, args.distance_threshold, args.append_pair_distance_data, mc_path, args.epsilon_rel, args.max_topologies)
 
     elif args.mode == Mode.AUGMENT_MATES:
-        action = MateAugmentation(globaldata, args.mc_path, args.distance_threshold, args.require_axis, True, args.epsilon_rel, args.max_topologies)
+        action = MateAugmentation(globaldata, mc_path, args.distance_threshold, args.require_axis, True, args.epsilon_rel, args.max_topologies)
     
     elif args.mode == Mode.ADD_MATE_LABELS:
-        action = MateLabelSaver(globaldata, args.mc_path, args.augmented_labels, args.dry_run)
+        action = MateLabelSaver(globaldata, mc_path, args.augmented_labels, args.dry_run)
     
     elif args.mode == Mode.FINALIZE_DATASET:
-        action = DataChecker(globaldata, args.mc_path, args.batch_path, args.distance_threshold)
+        action = DataChecker(globaldata, mc_path, batch_path, args.distance_threshold)
 
     dataset.map_data(action)
 
-    if args.mode == Mode.FINALIZE_DATASET:
+    if args.mode == Mode.FULL_PIPELINE:
+        logging.info('Saving mate labels final data check')
+        action2 = MateLabelSaver(globaldata, mc_path, args.augmented_labels, args.dry_run)
+        dataset.map_data(action2)
+        action3 = DataChecker(globaldata, mc_path, batch_path, args.distance_threshold)
+        logging.info('Final data check')
+        dataset.map_data(action3)
+
+    if args.mode == Mode.FINALIZE_DATASET or args.mode == Mode.FULL_PIPELINE:
+        logging.info('writing training files')
         final_df = ps.read_parquet(os.path.join(args.dataroot, args.name, 'final_stat.parquet'))
         datalist = list(final_df[lambda df: df['valid']].index)
         random.seed(args.seed)

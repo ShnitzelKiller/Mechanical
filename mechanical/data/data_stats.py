@@ -37,7 +37,7 @@ class BatchSaver(DataVisitor):
         out_dict = {}
         stat = Stats(defaults={'invalid_bbox': False})
         stat.append(data.assembly_info.stats, data.ind)
-        out_dict['assembly_stats'] = stat
+        out_dict['pspy_stats'] = stat
         if data.assembly_info.stats['initialized'] and data.assembly_info.stats['num_invalid_loaded_parts'] == 0:
             batch = data.assembly_info.create_batches()
             if not self.dry_run:
@@ -353,7 +353,7 @@ class MateChecker(DataVisitor):
                             'feasible': feasible}
                     stat = {**stat, **rigidstat}
                 all_stats.append(stat, data.ind)
-        return {'mate_check_stats': mate_stats, 'assembly_stats': all_stats}
+        return {'mate_check_stats': mate_stats, 'assembly_check_stats': all_stats}
 
 class CombinedAxisMateChecker(DataVisitor):
     def __init__(self, global_data, mc_path, epsilon_rel, max_topologies, validate_feasibility=False, check_alternate_paths=False, max_axis_groups=10, save_frames=False, save_dirs=True, dry_run=False):
@@ -368,19 +368,24 @@ class CombinedAxisMateChecker(DataVisitor):
     
 
 class CombinedAxisBatchAugment(DataVisitor):
-    def __init__(self, global_data, mc_path, batch_path, epsilon_rel, max_topologies, validate_feasibility=False, check_alternate_paths=False, max_axis_groups=10, save_frames=False, save_dirs=True, dry_run=False, distance_threshold=.01, require_axis=True, matched_axes_only=True, use_uvnet_features=True):
-        self.transforms = [LoadMCData(mc_path), AssemblyLoader(global_data, use_uvnet_features=use_uvnet_features, epsilon_rel=epsilon_rel, max_topologies=max_topologies, precompute=True)]
+    def __init__(self, global_data, mc_path, batch_path, epsilon_rel, max_topologies, validate_feasibility=False, check_alternate_paths=False, max_axis_groups=10, save_frames=False, save_dirs=True, dry_run=False, distance_threshold=.01, require_axis=True, matched_axes_only=True, use_uvnet_features=True, append_pair_data=True):
+        self.transforms = [LoadMCData(mc_path),
+            AssemblyLoader(global_data, use_uvnet_features=use_uvnet_features, epsilon_rel=epsilon_rel, max_topologies=max_topologies, precompute=True),
+            ComputeDistances(distance_threshold=distance_threshold)]
         
         self.batch_saver = BatchSaver(global_data, batch_path, use_uvnet_features, epsilon_rel, max_topologies, dry_run)
         self.axis_saver = MCDataSaver(global_data, mc_path, max_axis_groups, epsilon_rel, max_topologies, save_frames=save_frames, save_dirs=save_dirs, dry_run=dry_run)
         self.mate_checker = MateChecker(global_data, mc_path, epsilon_rel, max_topologies, validate_feasibility=validate_feasibility, check_alternate_paths=check_alternate_paths)
+        self.distance_checker = DistanceChecker(global_data, distance_threshold, append_pair_data, mc_path, epsilon_rel, max_topologies)
         self.augmenter = MateAugmentation(global_data, mc_path, distance_threshold, require_axis, matched_axes_only, epsilon_rel, max_topologies)
     
     def process(self, data):
         out_dict1 = self.axis_saver(data)
         out_dict2 = self.mate_checker(data)
         out_dict3 = self.augmenter(data)
-        return {**out_dict1, **out_dict2, **out_dict3}
+        out_dict4 = self.batch_saver(data)
+        out_dict5 = self.distance_checker(data)
+        return {**out_dict1, **out_dict2, **out_dict3, **out_dict4, **out_dict5}
     
 
 class MCCountChecker(DataVisitor):
@@ -403,12 +408,13 @@ class MCCountChecker(DataVisitor):
         
 
 class DistanceChecker(DataVisitor):
-    def __init__(self, global_data, distance_threshold, append_pair_data, mc_path, epsilon_rel, max_topologies):
-        self.transforms = [AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies)]
+    def __init__(self, global_data, distance_threshold, append_pair_data, mc_path, epsilon_rel, max_topologies, coincidence=False):
+        self.transforms = [AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies), ComputeDistances(distance_threshold=distance_threshold)]
         self.global_data = global_data
         self.distance_threshold = distance_threshold
         self.append_pair_data = append_pair_data
         self.mc_path = mc_path
+        self.coincidence = coincidence
 
     def process(self, data):
         all_mate_stats = Stats()
@@ -419,10 +425,12 @@ class DistanceChecker(DataVisitor):
         part_subset = self.global_data.part_df.loc[[data.ind]]
 
         connections = {tuple(sorted((assembly_info.occ_to_index[mate_subset.iloc[l]['Part1']], assembly_info.occ_to_index[mate_subset.iloc[l]['Part2']]))): l for l in range(mate_subset.shape[0])}
-        proposals = assembly_info.mate_proposals(coincident_only=True)
+        
+        if self.coincidence:
+            proposals = assembly_info.mate_proposals(coincident_only=True)
 
-
-        distances = assembly_info.part_distances(self.distance_threshold)
+        #distances = assembly_info.part_distances(self.distance_threshold)
+        distances = data.distances
         
         if self.append_pair_data:
             mcpath = os.path.join(self.mc_path, f'{data.ind}.hdf5')
@@ -445,7 +453,11 @@ class DistanceChecker(DataVisitor):
             stat['num_connected_far'] = 0
             stat['num_connected_not_coincident'] = 0
             stat['num_connected_far_or_not_coincident'] = 0
-            allpairs = {pair for pair in distances}.union({pair for pair in proposals})
+
+            if self.coincidence:
+                allpairs = {pair for pair in distances}.union({pair for pair in proposals})
+            else:
+                allpairs = distances
 
             for pair in allpairs:
                 comp1 = part_subset.iloc[pair[0]]['RigidComponentID']
@@ -453,22 +465,24 @@ class DistanceChecker(DataVisitor):
                 if comp1 != comp2 and pair not in connections:
                     if pair in distances and distances[pair] < self.distance_threshold:
                         stat['num_unconnected_close'] += 1
-                    if pair in proposals:
-                        stat['num_unconnected_coincident'] += 1
-                    if pair in distances and distances[pair] < self.distance_threshold and pair in proposals:
-                        stat['num_unconnected_close_and_coincident'] += 1
+                    if self.coincidence:
+                        if pair in proposals:
+                            stat['num_unconnected_coincident'] += 1
+                        if pair in distances and distances[pair] < self.distance_threshold and pair in proposals:
+                            stat['num_unconnected_close_and_coincident'] += 1
 
             
             for pair in connections:
                 mate_stat = {'connected_far': False, 'connected_not_coincident': False}
-                if pair not in proposals or pair not in distances or distances[pair] >= self.distance_threshold:
-                    stat['num_connected_far_or_not_coincident'] += 1
                 if pair not in distances or distances[pair] >= self.distance_threshold:
                     stat['num_connected_far'] += 1
                     mate_stat['connected_far'] = True
-                if pair not in proposals:
-                    stat['num_connected_not_coincident'] += 1
-                    mate_stat['connected_not_coincident'] = True
+                if self.coincidence:
+                    if pair not in proposals or pair not in distances or distances[pair] >= self.distance_threshold:
+                        stat['num_connected_far_or_not_coincident'] += 1
+                    if pair not in proposals:
+                        stat['num_connected_not_coincident'] += 1
+                        mate_stat['connected_not_coincident'] = True
                 mate_stat['type'] = mate_subset.iloc[connections[pair]]['Type']
                 mate_stat['assembly'] = data.ind
                 all_mate_stats.append(mate_stat, mate_subset.iloc[connections[pair]]['MateIndex'])
@@ -487,7 +501,7 @@ class DistanceChecker(DataVisitor):
 
 class MateAugmentation(DataVisitor):
     def __init__(self, global_data, mc_path, distance_threshold, require_axis, matched_axes_only, epsilon_rel, max_topologies):
-        self.transforms = [AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies, precompute=True)]
+        self.transforms = [AssemblyLoader(global_data, use_uvnet_features=False, epsilon_rel=epsilon_rel, max_topologies=max_topologies, precompute=True), ComputeDistances(distance_threshold=distance_threshold)]
         self.global_data = global_data
         self.matched_axes_only = matched_axes_only
         self.mc_path = mc_path
@@ -510,14 +524,14 @@ class MateAugmentation(DataVisitor):
                 with h5py.File(mcfile,'r') as f:
                     counts = np.array(f['mc_counts'])
                 assstats.append({'mc_counts_agree':all([count == len(axs) for count, axs in zip(counts, assembly_info.mc_axes_all)])}, data.ind)
-                stat = assembly_info.fill_missing_mates(mates, list(part_subset['RigidComponentID']), self.distance_threshold, pair_to_dirs=pair_to_dirs, pair_to_axes=pair_to_axes, require_axis=self.require_axis)
+                stat = assembly_info.fill_missing_mates(mates, data.distances, list(part_subset['RigidComponentID']), self.distance_threshold, pair_to_dirs=pair_to_dirs, pair_to_axes=pair_to_axes, require_axis=self.require_axis)
             else: 
-                stat = assembly_info.fill_missing_mates(mates, list(part_subset['RigidComponentID']), self.distance_threshold)
+                stat = assembly_info.fill_missing_mates(mates, data.distances, list(part_subset['RigidComponentID']), self.distance_threshold)
             for st in stat:
                 st['Assembly'] = data.ind
             for st in stat:
                 stats.append(st)
-        return {'newmate_stats':stats, 'assembly_stats': assstats}
+        return {'newmate_stats':stats, 'assembly_newmate_stats': assstats}
 
 class MateLabelSaver(DataVisitor):
     def __init__(self, global_data, mc_path, augmented_labels, dry_run):
@@ -593,7 +607,7 @@ class MateLabelSaver(DataVisitor):
                         #         assert(pair_data[key].attrs['augmented_type'] == augmentedType)
         else:
             stat.append({'skipped': True}, data.ind)
-        return {'stats': stat}
+        return {'add_label_stats': stat}
 
 
 class DataChecker(DataVisitor):

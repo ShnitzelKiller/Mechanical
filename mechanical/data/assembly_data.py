@@ -756,13 +756,12 @@ class AssemblyInfo:
             matestats.append(stat)
         return matestats
 
-    def fill_missing_mates(self, mates, components, threshold, pair_to_dirs=None, pair_to_axes=None, require_axis=False):
+    def fill_missing_mates(self, mates, distances, components, threshold, pair_to_dirs=None, pair_to_axes=None, require_axis=False):
         newmatestats = []
         #precompute transformed mate coordinate frames
         mates2 = self.transform_mates(mates)
         
         connections = {tuple(sorted((self.occ_to_index[mate.matedEntities[0][0]], self.occ_to_index[mate.matedEntities[1][0]]))) for mate in mates}
-        distances = self.part_distances(threshold)
 
         for pair in distances:
             comp1 = components[pair[0]]
