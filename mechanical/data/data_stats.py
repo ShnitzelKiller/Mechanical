@@ -599,12 +599,12 @@ class MateLabelSaver(DataVisitor):
                             pair_data[key].attrs['type'] = mateType
                             pair_data[key].attrs['dirIndex'] = mateDirInd
                             pair_data[key].attrs['axisIndex'] = mateAxisInd
-                        # else:
-                        #     assert(pair_data[key].attrs['type'] == mateType)
-                        #     assert(pair_data[key].attrs['dirIndex'] == mateDirInd)
-                        #     assert(pair_data[key].attrs['axisIndex'] == mateAxisInd)
-                        #     if augmentedType == mate_types.index(MateTypes.FASTENED.value):
-                        #         assert(pair_data[key].attrs['augmented_type'] == augmentedType)
+                        else:
+                            assert(pair_data[key].attrs['type'] == mateType)
+                            assert(pair_data[key].attrs['dirIndex'] == mateDirInd)
+                            assert(pair_data[key].attrs['axisIndex'] == mateAxisInd)
+                            if augmentedType == mate_types.index(MateTypes.FASTENED.value):
+                                assert(pair_data[key].attrs['augmented_type'] == augmentedType)
         else:
             stat.append({'skipped': True}, data.ind)
         return {'add_label_stats': stat}
@@ -656,37 +656,41 @@ class DataChecker(DataVisitor):
             num_unconnected_close_with_axis = 0
             num_densified_fastens = 0
             num_augmented_missing_mates = 0
+            missing_augmented_labels = 0
             num_missing_mates = 0
             num_connected_coaxial_far = 0
             with h5py.File(mcfile, 'r') as f:
                 pair_data = f['pair_data']
                 for key in pair_data:
-                    pair = tuple(sorted([int(k) for k in key.split(',')]))
-                    if 'distance' not in pair_data[key].attrs:
-                        has_distance = False
+                    if len(pair_data[key]['axes'].keys()) > 0:
+                        pair = tuple(sorted([int(k) for k in key.split(',')]))
+                        if 'distance' not in pair_data[key].attrs:
+                            has_distance = False
 
-                    else:
-                        if pair in connections and pair_data[key].attrs['distance'] >= self.distance_threshold:
-                            num_connected_coaxial_far += 1
-                        if pair_data[key].attrs['distance'] < self.distance_threshold:
-                            if pair in connections:
-                                if 'type' not in pair_data[key].attrs and 'augmented_type' not in pair_data[key].attrs:
-                                    has_type_label = False
-                            else:
-                                num_unconnected_close_with_axis += 1
-                                if data.ind in newmate_df.index and pair in newmate_subset_by_pair.index and newmate_subset_by_pair.loc[pair, 'added_mate']:
-                                    num_augmented_missing_mates += 1
-                                elif 'augmented_type' in pair_data[key].attrs and pair_data[key].attrs['augmented_type'] == mate_types.index(MateTypes.FASTENED.value):
-                                    num_densified_fastens += 1
-                                    num_augmented_missing_mates += 1
+                        else:
+                            if pair in connections and pair_data[key].attrs['distance'] >= self.distance_threshold:
+                                num_connected_coaxial_far += 1
+                            if pair_data[key].attrs['distance'] < self.distance_threshold:
+                                if pair in connections:
+                                    if 'type' not in pair_data[key].attrs:
+                                        has_type_label = False
                                 else:
-                                    num_missing_mates += 1
-
-                
+                                    num_unconnected_close_with_axis += 1
+                                    if 'augmented_type' in pair_data[key].attrs and pair_data[key].attrs['augmented_type'] == mate_types.index(MateTypes.FASTENED.value):
+                                        num_densified_fastens += 1
+                                    elif data.ind in newmate_df.index and pair in newmate_subset_by_pair.index and newmate_subset_by_pair.loc[pair, 'added_mate']:
+                                        if 'augmented_type' in pair_data[key].attrs:
+                                            num_augmented_missing_mates += 1
+                                        else:
+                                            missing_augmented_labels += 1
+                                            num_missing_mates += 1
+                                    else:
+                                        num_missing_mates += 1
 
                         
             row['has_all_distances'] = has_distance
             if has_distance:
+                row['missing_augmented_labels'] = missing_augmented_labels
                 row['num_missing_mates'] = num_missing_mates #number of close parts with shared axes but no mate or augmented mate
                 row['num_augmented_missing_mates'] = num_augmented_missing_mates #number of close parts with shared axes that is augmented
                 row['num_densified_fastens'] = num_densified_fastens
@@ -695,7 +699,7 @@ class DataChecker(DataVisitor):
                 row['num_connected_coaxial_far'] = num_connected_coaxial_far
 
         valid = False
-        if row['has_mc_file'] and row['has_torch_file'] and has_distance and has_mate_check and pspy_valid and has_type_label and row['num_missing_mates'] == 0 and row['all_mates_valid'] and row['num_connected_coaxial_far'] == 0:
+        if row['has_mc_file'] and row['has_torch_file'] and has_distance and has_mate_check and pspy_valid and has_type_label and row['num_missing_mates'] == 0 and row['all_mates_valid'] and row['num_connected_coaxial_far'] == 0 and row['missing_augmented_labels'] == 0:
             valid = True
         
         row['valid'] = valid

@@ -79,6 +79,8 @@ parser.add_argument('--newmate_df_path',default=None)
 parser.add_argument('--mate_check_df_path',default=None)
 parser.add_argument('--pspy_df_path', default=None)
 parser.add_argument('--augmented_labels', action='store_true')
+parser.add_argument('--no_augmented_labels', dest='augmented_labels', action='store_false')
+parser.set_defaults(augmented_labels=True)
 parser.add_argument('--seed', type=int, default=1234)
 parser.add_argument('--split', nargs=3, type=int, default=[8, 1, 1])
 
