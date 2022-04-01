@@ -21,6 +21,7 @@ class Mode(Enum):
     AUGMENT_MATES = "AUGMENT_MATES"
     ADD_MATE_LABELS = "ADD_MATE_LABELS"
     FINALIZE_DATASET = "FINALIZE_DATASET"
+    CHECK_SAMPLES = "CHECK_SAMPLES"
 
 parser = ArgumentParser()
 
@@ -124,7 +125,8 @@ def main():
     elif args.mode == Mode.PENETRATION:
         meshpath = os.path.join(args.dataroot, 'mesh')
         action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, args.include_vertices, meshpath)
-    
+    elif args.mode == Mode.CHECK_SAMPLES:
+        action = UVSampleChecker(args.batch_path)
     elif args.mode == Mode.SAVE_AXIS_DATA:
         mc_path = os.path.join(statspath, 'axis_data')
         if not os.path.isdir(mc_path):

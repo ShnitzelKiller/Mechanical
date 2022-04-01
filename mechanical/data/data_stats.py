@@ -707,4 +707,47 @@ class DataChecker(DataVisitor):
         stat.append(row, data.ind)
         return {'final_stat': stat}
 
-                
+
+class UVSampleChecker(DataVisitor):
+
+    def __init__(self, batch_path):
+        self.transforms = [LoadBatch(batch_path)]
+    
+
+    def process(self, data):
+        face_samples = data.batch.face_samples
+        edge_samples = data.batch.edge_samples
+
+        has_face_samples=True
+        has_edge_samples=True
+        if face_samples.shape[0] > 0:
+            max_face_pos_norm = face_samples[:,:3,:,:].norm(dim=1).max().item()
+            max_face_norm_norm = face_samples[:,3:6,:,:].norm(dim=1).max().item()
+            max_face_crv_norm = face_samples[:,6:8,:,:].norm(dim=1).max().item()
+            max_face_mask_norm = face_samples[:,8,:,:].abs().max().item()
+            max_face_norm = face_samples.norm(dim=1).max().item()
+        else:
+            has_face_samples=False
+            max_face_pos_norm = 0
+            max_face_norm_norm = 0
+            max_face_norm = 0
+            max_face_crv_norm = 0
+            max_face_mask_norm = 0
+        if edge_samples.shape[0] > 0:
+            max_edge_pos_norm = edge_samples[:,:3,:].norm(dim=1).max().item()
+            max_edge_norm_norm = edge_samples[:,3:6,:].norm(dim=1).max().item()
+            max_edge_crv_norm = edge_samples[:,6,:].abs().max().item()
+            max_edge_norm = edge_samples.norm(dim=1).max().item()
+        else:
+            has_edge_samples=False
+            max_edge_pos_norm = 0
+            max_edge_norm_norm = 0
+            max_edge_norm = 0
+            max_edge_crv_norm = 0
+
+
+        stat = Stats()
+        stat.append({'max_face_crv_norm': max_face_crv_norm, 'max_edge_crv_norm': max_edge_crv_norm, 'max_face_mask_norm': max_face_mask_norm, 'max_face_pos_norm': max_face_pos_norm, 'max_face_norm_norm': max_face_norm_norm, 'max_edge_pos_norm': max_edge_pos_norm, 'max_edge_norm_norm': max_edge_norm_norm, 'max_face_norm': max_face_norm, 'max_edge_norm': max_edge_norm, 'has_face_samples': has_face_samples, 'has_edge_samples': has_edge_samples}, data.ind)
+
+        return {'uv_stats': stat}
+
