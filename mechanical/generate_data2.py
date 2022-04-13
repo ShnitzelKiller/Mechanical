@@ -49,6 +49,7 @@ parser.add_argument('--rotation_angle',type=float, default=math.pi/16)
 parser.add_argument('--num_samples',type=int, default=100)
 parser.add_argument('--include_vertices', action='store_true')
 parser.add_argument('--compute_all',action='store_true')
+parser.add_argument('--simulate_augmented_mates',action='store_true')
 
 #axis args:
 parser.add_argument('--max_axis_groups',type=int, default=100)
@@ -126,7 +127,7 @@ def main():
 
     elif args.mode == Mode.PENETRATION:
         meshpath = os.path.join(args.dataroot, 'mesh')
-        action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, args.include_vertices, meshpath, compute_all=args.compute_all)
+        action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, args.include_vertices, meshpath, compute_all=args.compute_all, augmented_mates=args.simulate_augmented_mates, batch_path=batch_path)
     elif args.mode == Mode.CHECK_SAMPLES:
         action = UVSampleChecker(args.batch_path)
     elif args.mode == Mode.SAVE_AXIS_DATA:
