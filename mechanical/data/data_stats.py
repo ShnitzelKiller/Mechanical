@@ -154,7 +154,7 @@ class DisplacementPenalty(DataVisitor):
                 mtype = mate_subset.iloc[j]['Type']
 
                 row = self.process_mate(mtype, pid1, pid2, meshes, rigidcomps, rel_distance, axis, origin, data.ind)
-                stats.append(row)
+                stats.append(row, mate_subset.iloc[j]['MateIndex'])
             
             if self.augmented_mates and data.ind in newmate_stats_df.index:
                 for j in range(newmate_subset.shape[0]):
@@ -166,7 +166,7 @@ class DisplacementPenalty(DataVisitor):
                         origin = data.batch.mcfs[axis_index,3:].numpy()
                         mtype = newmate_subset.iloc[j]['type']
                         row = self.process_mate(mtype, pid1, pid2, meshes, rigidcomps, rel_distance, axis, origin, data.ind)
-                        augmented_stats.append(row)
+                        augmented_stats.append(row, newmate_subset.iloc[j]['NewMateIndex'])
 
 
         return {'mate_penetration_stats': stats, 'augmented_mate_penetration_stats': augmented_stats}

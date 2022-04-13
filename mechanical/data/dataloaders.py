@@ -50,6 +50,7 @@ class GlobalData:
         if not hasattr(self, '_newmate_df'):
             logging.info('Loading augmented mate data')
             self._newmate_df = ps.read_parquet(self.newmate_df_path)
+            self._newmate_df['NewMateIndex'] = self._newmate_df.index
             self._newmate_df.set_index('Assembly', inplace=True)
             logging.info('done')
         return self._newmate_df
