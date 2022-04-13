@@ -539,12 +539,13 @@ class MateAugmentation(DataVisitor):
         return {'newmate_stats':stats, 'assembly_newmate_stats': assstats}
 
 class MateLabelSaver(DataVisitor):
-    def __init__(self, global_data, mc_path, augmented_labels, dry_run):
+    def __init__(self, global_data, mc_path, augmented_labels, dry_run, indices_only=False):
         self.transforms = [AssemblyLoader(global_data, load_geometry=False, pair_data=True)]
         self.mc_path = mc_path
         self.global_data = global_data
         self.augmented_labels = augmented_labels
         self.dry_run = dry_run
+        self.indices_only = indices_only
 
         self.allowed_assemblies = set(global_data.mate_check_df['Assembly'])
 
@@ -577,6 +578,8 @@ class MateLabelSaver(DataVisitor):
                         mateAxisInd = -1
                         augmentedDirInd = -1
                         augmentedAxisInd = -1
+                        mate_index = -1
+                        augmented_index = -1
                         if pair in data.pair_to_index:
                             mate_index = data.pair_to_index[pair]
                             mateType = mate_types.index(mate_subset.iloc[mate_index]['Type'])
@@ -597,13 +600,17 @@ class MateLabelSaver(DataVisitor):
                             augmentedType = mate_types.index(MateTypes.FASTENED.value)
 
                         if not self.dry_run:
-                            if self.augmented_labels:
-                                pair_data[key].attrs['augmented_type'] = augmentedType
-                                pair_data[key].attrs['augmented_dirIndex'] = augmentedDirInd
-                                pair_data[key].attrs['augmented_axisIndex'] = augmentedAxisInd
-                            pair_data[key].attrs['type'] = mateType
-                            pair_data[key].attrs['dirIndex'] = mateDirInd
-                            pair_data[key].attrs['axisIndex'] = mateAxisInd
+                            if self.indices_only:
+                                pair_data[key].attrs['mate_index'] = mate_index
+                                pair_data[key].attrs['augmented_mate_index'] = augmented_index
+                            else:
+                                if self.augmented_labels:
+                                    pair_data[key].attrs['augmented_type'] = augmentedType
+                                    pair_data[key].attrs['augmented_dirIndex'] = augmentedDirInd
+                                    pair_data[key].attrs['augmented_axisIndex'] = augmentedAxisInd
+                                pair_data[key].attrs['type'] = mateType
+                                pair_data[key].attrs['dirIndex'] = mateDirInd
+                                pair_data[key].attrs['axisIndex'] = mateAxisInd
                         else:
                             assert(pair_data[key].attrs['type'] == mateType)
                             assert(pair_data[key].attrs['dirIndex'] == mateDirInd)

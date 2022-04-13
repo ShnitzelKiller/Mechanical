@@ -81,6 +81,7 @@ parser.add_argument('--newmate_df_path',default=None)
 parser.add_argument('--mate_check_df_path',default=None)
 parser.add_argument('--pspy_df_path', default=None)
 parser.add_argument('--augmented_labels', action='store_true')
+parser.add_argument('--indices_only', action='store_true')
 parser.add_argument('--no_augmented_labels', dest='augmented_labels', action='store_false')
 parser.set_defaults(augmented_labels=True)
 parser.add_argument('--seed', type=int, default=1234)
@@ -164,7 +165,7 @@ def main():
         action = MateAugmentation(globaldata, mc_path, args.distance_threshold, args.require_axis, True, args.epsilon_rel, args.max_topologies)
     
     elif args.mode == Mode.ADD_MATE_LABELS:
-        action = MateLabelSaver(globaldata, mc_path, args.augmented_labels, args.dry_run)
+        action = MateLabelSaver(globaldata, mc_path, args.augmented_labels, args.dry_run, indices_only=args.indices_only)
     
     elif args.mode == Mode.FINALIZE_DATASET:
         action = DataChecker(globaldata, mc_path, batch_path, args.distance_threshold)
