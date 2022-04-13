@@ -47,13 +47,14 @@ class BatchSaver(DataVisitor):
 
 
 class DisplacementPenalty(DataVisitor):
-    def __init__(self, global_data, sliding_distance, rotation_angle, num_samples, include_vertices, meshpath):
+    def __init__(self, global_data, sliding_distance, rotation_angle, num_samples, include_vertices, meshpath, compute_all):
         self.transforms = [MeshLoader(meshpath)]
         self.global_data = global_data
         self.sliding_distance = sliding_distance
         self.rotation_angle = rotation_angle
         self.samples = num_samples
         self.include_vertices = include_vertices
+        self.compute_all = compute_all
     
     def process(self, data):
         stats = Stats()
@@ -76,16 +77,20 @@ class DisplacementPenalty(DataVisitor):
             
             for j in range(mate_subset.shape[0]):
                 mtype = mate_subset.iloc[j]['Type']
-                if mtype == MateTypes.REVOLUTE or MateTypes.CYLINDRICAL or MateTypes.SLIDER:
-                    sliding = False
-                    rotating = False
-                    if mtype == MateTypes.REVOLUTE:
-                        rotating = True
-                    elif mtype == MateTypes.CYLINDRICAL:
-                        rotating = True
+                if self.compute_all or mtype == MateTypes.REVOLUTE or MateTypes.CYLINDRICAL or MateTypes.SLIDER:
+                    if self.compute_all:
                         sliding = True
-                    elif mtype == MateTypes.SLIDER:
-                        sliding = True
+                        rotating = True
+                    else:
+                        sliding = False
+                        rotating = False
+                        if mtype == MateTypes.REVOLUTE:
+                            rotating = True
+                        elif mtype == MateTypes.CYLINDRICAL:
+                            rotating = True
+                            sliding = True
+                        elif mtype == MateTypes.SLIDER:
+                            sliding = True
                     
                     pid1 = occ_to_index[mate_subset.iloc[j]['Part1']]
                     pid2 = occ_to_index[mate_subset.iloc[j]['Part2']]
@@ -112,7 +117,7 @@ class DisplacementPenalty(DataVisitor):
 
                     if sliding:
                         for k,displacement in enumerate([rel_distance, -rel_distance]):
-                            sd = displaced_min_signed_distance(meshes_subset, axis, samples=self.samples, displacement=displacement, include_vertices=self.include_vertices)
+                            sd = displaced_min_signed_distance(meshes_subset, axis, motion_type='SLIDE', samples=self.samples, displacement=displacement, include_vertices=self.include_vertices)
                             penalties_penetration_sliding[k] = max(0, -sd) / rel_distance
                             penalties_separation_sliding[k] = max(0, sd) / rel_distance
                     if rotating:
