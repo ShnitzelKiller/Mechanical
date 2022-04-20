@@ -609,29 +609,30 @@ class MateLabelSaver(DataVisitor):
                         mate_index = -1
                         augmented_index = -1
                         if pair in data.pair_to_index:
-                            mate_index = data.pair_to_index[pair]
-                            mateType = mate_types.index(mate_subset.iloc[mate_index]['Type'])
-                            mate_check_row = mate_check_df.loc[mate_subset.iloc[mate_index]['MateIndex']]
+                            mate_subset_index = data.pair_to_index[pair]
+                            mate_index = mate_subset.iloc[mate_subset_index]['MateIndex']
+                            mateType = mate_types.index(mate_subset.iloc[mate_subset_index]['Type'])
+                            mate_check_row = mate_check_df.loc[mate_index]
                             mateDirInd = mate_check_row['dir_index']
                             mateAxisInd = mate_check_row['axis_index']
 
                         if self.augmented_labels:
                             if pair in augmented_pairs_to_index:
-                                augmented_index = augmented_pairs_to_index[pair]
-                                if newmate_subset.iloc[augmented_index]['added_mate']:
-                                    augmentedType = mate_types.index(newmate_subset.iloc[augmented_index]['type'])
-                                    augmentedDirInd = newmate_subset.iloc[augmented_index]['dir_index']
-                                    augmentedAxisInd = newmate_subset.iloc[augmented_index]['axis_index']
+                                augmented_subset_index = augmented_pairs_to_index[pair]
+                                if newmate_subset.iloc[augmented_subset_index]['added_mate']:
+                                    augmented_index = newmate_subset.iloc[augmented_subset_index]['NewMateIndex']
+                                    augmentedType = mate_types.index(newmate_subset.iloc[augmented_subset_index]['type'])
+                                    augmentedDirInd = newmate_subset.iloc[augmented_subset_index]['dir_index']
+                                    augmentedAxisInd = newmate_subset.iloc[augmented_subset_index]['axis_index']
                         
                         #densify fasten mates
                         if rigid_comps[pair[0]] == rigid_comps[pair[1]]:
                             augmentedType = mate_types.index(MateTypes.FASTENED.value)
 
                         if not self.dry_run:
-                            if self.indices_only:
-                                pair_data[key].attrs['mate_index'] = mate_index
-                                pair_data[key].attrs['augmented_mate_index'] = augmented_index
-                            else:
+                            pair_data[key].attrs['mate_index'] = mate_index
+                            pair_data[key].attrs['augmented_mate_index'] = augmented_index
+                            if not self.indices_only:
                                 if self.augmented_labels:
                                     pair_data[key].attrs['augmented_type'] = augmentedType
                                     pair_data[key].attrs['augmented_dirIndex'] = augmentedDirInd

@@ -8,23 +8,12 @@ import h5py
 from scipy.spatial.transform import Rotation as R
 import torch
 import functools
+from mechanical.utils.data import df_to_mates
 
 
 def compose(*fs):
     return functools.reduce(lambda f, g: lambda *a, **kw: f(g(*a, **kw)), fs)
 
-
-def df_to_mates(mate_subset):
-    mates = []
-    for j in range(mate_subset.shape[0]):
-        mate_row = mate_subset.iloc[j]
-        mate = Mate(occIds=[mate_row[f'Part{p+1}'] for p in range(2)],
-                origins=[mate_row[f'Origin{p+1}'] for p in range(2)],
-                rots=[mate_row[f'Axes{p+1}'] for p in range(2)],
-                name=mate_row['Name'],
-                mateType=mate_row['Type'])
-        mates.append(mate)
-    return mates
 
 class MeshLoader:
     def __init__(self, meshpath):

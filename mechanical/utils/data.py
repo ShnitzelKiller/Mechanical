@@ -1,6 +1,7 @@
 from mechanical.onshape import Mate
 from enum import Enum
 import numpy as np
+from mechanical.utils.transforms import compute_basis
 
 def df_to_mates(mate_subset):
     mates = []
@@ -12,6 +13,24 @@ def df_to_mates(mate_subset):
                 name=mate_row['Name'],
                 mateType=mate_row['Type'])
         mates.append(mate)
+    return mates
+
+def newmate_df_to_mates(newmate_subset, batch):
+    mates = []
+    for j in range(newmate_subset.shape[0]):
+        if newmate_subset.iloc[j]['added_mate']:
+            newmate_row = newmate_subset.iloc[j]
+            axis_index = newmate_subset.iloc[j]['axis_index']
+            origin = batch.mcfs[axis_index,3:].numpy()
+            axis = batch.mcfs[axis_index,:3].numpy()
+            axes = compute_basis(axis)
+            axes = np.concatenate([axes.T, axis[:,np.newaxis]], axis=1)
+            mate = Mate(occIds=[newmate_row[f'part{p+1}'] for p in range(2)],
+                    origins=[origin for p in range(2)],
+                    rots=[axes for p in range(2)],
+                    name=f'Augmented {j}',
+                    mateType=newmate_row['type'])
+            mates.append(mate)
     return mates
 
 class MateTypes(Enum):
