@@ -83,7 +83,7 @@ def filter_assembly(geo, mates, indices):
     mates_f = [mate for mate in mates if occ_to_id[mate.matedEntities[0][0]] in indices and occ_to_id[mate.matedEntities[1][0]] in indices]
     return geo_f, mates_f
 
-def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600):
+def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600, no_mate_transform_after_index=-1):
     #max_part_dim = max([max(geo[i][1].V.max(0)-geo[i][1].V.min(0)) for i in geo if geo[i][1].V.shape[0] > 0])
     is_pspy = not hasattr(geo[list(geo)[0]][1], 'all_mate_connectors')
     num_parts = len(geo)
@@ -174,10 +174,14 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
             continue
         if len(mate.matedEntities)==2:
             for mated in mate.matedEntities:
-                tf = tfs[mated[0]]
-                newaxes = tf[:3, :3] @ mated[1][1]
-                newaxes *= maxDim
-                neworigin = tf[:3,:3] @ mated[1][0] + tf[:3,3]
+                if i < no_mate_transform_after_index or no_mate_transform_after_index < 0:
+                    tf = tfs[mated[0]]
+                    newaxes = tf[:3, :3] @ mated[1][1]
+                    newaxes *= maxDim
+                    neworigin = tf[:3,:3] @ mated[1][0] + tf[:3,3]
+                else:
+                    newaxes = mated[1][1]
+                    neworigin = mated[1][0]
                 mate_objects = add_axis(neworigin, newaxes[:,0], newaxes[:,1], newaxes[:,2], scale=0.1, mate_type=mate.type)
                 all_mate_objects += mate_objects
 

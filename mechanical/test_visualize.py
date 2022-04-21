@@ -32,7 +32,7 @@ if __name__ == '__main__':
 
     batch_path = '/fast/jamesn8/assembly_data/assembly_torch2_fixsize/full_pipeline/batches'
 
-    sample = 1030
+    sample = 108
 
 
 
@@ -74,4 +74,4 @@ if __name__ == '__main__':
     choices = [('fullAssembly', -1)] + choices
 
     rigid_labels = list(part_df.loc[sample, 'RigidComponentID'])
-    renderer = plot_assembly(geo, mates, rigid_labels = rigid_labels)
+    renderer = plot_assembly(geo, mates, rigid_labels = rigid_labels, no_mate_transform_after_index=augmented_start)
