@@ -148,7 +148,7 @@ class AssemblyInfo:
     def transform_parts(self):
         p_normalized = np.identity(4, dtype=float)
         p_normalized[:3,3] = -self.median
-        p_normalized[3,3] = self.maxdim #todo: figure out if this is double the factor
+        p_normalized[3,3] = self.maxdim
 
         norm_matrices = [p_normalized @ tf for tf in self.occ_transforms]
         transformed_parts = []
@@ -183,6 +183,7 @@ class AssemblyInfo:
         #these may change if we choose to handle transforms differently. TODO if changing: also handle the epsilons/scaling thresholds!
         self.mate_transforms = norm_matrices
         self.part_transforms = [np.identity(4) for part in self.parts]
+        self.norm_transform = p_normalized
 
 
     def precompute_geometry(self):

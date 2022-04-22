@@ -566,6 +566,16 @@ class MateAugmentation(DataVisitor):
                 stats.append(st)
         return {'newmate_stats':stats, 'assembly_newmate_stats': assstats}
 
+class TransformSaver(DataVisitor):
+    def __init__(self, global_data, mc_path):
+        self.global_data = global_data
+        self.transforms = [AssemblyLoader(global_data, load_geometry=True, include_mcfs=False)]
+        self.mc_path = mc_path
+
+    def process(self, data):
+        with h5py.File(os.path.join(self.mc_path, f'{data.ind}.hdf5'),'r+') as f:
+            f.create_dataset('normalization_matrix', data=data.assembly_info.norm_transform)
+
 class MateLabelSaver(DataVisitor):
     def __init__(self, global_data, mc_path, augmented_labels, dry_run, indices_only=False):
         self.transforms = [AssemblyLoader(global_data, load_geometry=False, pair_data=True)]

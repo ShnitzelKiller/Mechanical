@@ -22,6 +22,7 @@ class Mode(Enum):
     ADD_MATE_LABELS = "ADD_MATE_LABELS"
     FINALIZE_DATASET = "FINALIZE_DATASET"
     CHECK_SAMPLES = "CHECK_SAMPLES"
+    ADD_NORMALIZATION_MATRICES = "ADD_NORMALIZATION_MATRICES"
 
 parser = ArgumentParser()
 
@@ -168,6 +169,9 @@ def main():
     elif args.mode == Mode.ADD_MATE_LABELS:
         action = MateLabelSaver(globaldata, mc_path, args.augmented_labels, args.dry_run, indices_only=args.indices_only)
     
+    elif args.mode == Mode.ADD_NORMALIZATION_MATRICES:
+        action = TransformSaver(globaldata, mc_path)
+
     elif args.mode == Mode.FINALIZE_DATASET:
         action = DataChecker(globaldata, mc_path, batch_path, args.distance_threshold)
 

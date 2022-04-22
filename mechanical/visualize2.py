@@ -109,6 +109,7 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
     maxDim = (maxPt - minPt).max()
     scalemat = np.identity(4)
     scalemat[:3,:3] /= maxDim
+    scalemat[:3,3] = -meanPt
     tfs = {occ: scalemat @ geo[occ][0] for occ in geo}
     mesh_data = {}
     for i in geo:
@@ -176,12 +177,13 @@ def plot_assembly(geo, mates, rigid_labels=None, view_width=800, view_height=600
             for mated in mate.matedEntities:
                 if i < no_mate_transform_after_index or no_mate_transform_after_index < 0:
                     tf = tfs[mated[0]]
-                    newaxes = tf[:3, :3] @ mated[1][1]
-                    newaxes *= maxDim
-                    neworigin = tf[:3,:3] @ mated[1][0] + tf[:3,3]
                 else:
-                    newaxes = mated[1][1]
-                    neworigin = mated[1][0]
+                    tf = scalemat
+                
+                newaxes = tf[:3, :3] @ mated[1][1]
+                newaxes *= maxDim
+                neworigin = tf[:3,:3] @ mated[1][0] + tf[:3,3]
+                
                 mate_objects = add_axis(neworigin, newaxes[:,0], newaxes[:,1], newaxes[:,2], scale=0.1, mate_type=mate.type)
                 all_mate_objects += mate_objects
 
