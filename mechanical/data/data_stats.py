@@ -340,6 +340,9 @@ class MateChecker(DataVisitor):
                                     if np.allclose(projected_mate_origins[0], projected_origin, rtol=0, atol=self.epsilon_rel):
                                         mate_stat['axis_index'] = origin_ind
                                         break
+                                        
+                    if mate_stat['has_any_axis'] and mate_stat['axis_index'] < 0:
+                        mate_stat['axis_index'] = pairs_to_axes[key][0][1]
 
                     if mate.type == MateTypes.FASTENED:
                         mate_valid = mate_stat['has_any_axis']
