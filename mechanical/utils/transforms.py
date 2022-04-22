@@ -75,8 +75,15 @@ def homogenize_frame(frame, z_flip_only=True):
     frame_out[:,2] = z_final
     return frame_out
 
+def apply_homogeneous_transform(tf, origin):
+    "Apply 4-matrix `tf` to a point, fully utilizing tf"
+    origin_homo = np.concatenate([origin, [1]])
+    origin_homo = tf @ origin_homo
+    origin_homo /= origin_homo[3]
+    return origin_homo[:3]
+
 def apply_transform(tf, v, is_points=True):
-    "Apply the 4-matrix `tf` to a vector or column-wise matrix of vectors. If is_points, also add the translation."
+    "Apply the 4-matrix `tf` to a vector or column-wise matrix of vectors. If is_points, also add the translation. Does not use bottom row of tf"
     v_trans = tf[:3,:3] @ v
     if is_points:
         if v.ndim==1:

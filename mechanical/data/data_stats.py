@@ -7,12 +7,12 @@ import logging
 import os
 import h5py
 import numpy as np
+import numpy.linalg as LA
 import torch
 from mechanical.data.dataloaders import Data
-from mechanical.utils import homogenize_frame, homogenize_sign, cs_from_origin_frame, cs_to_origin_frame, project_to_plane
 from mechanical.geometry import displaced_min_signed_distance, min_signed_distance_symmetric
-from mechanical.utils import joinmeshes, mate_types
-from mechanical.utils import df_to_mates, MateTypes, mates_equivalent
+from mechanical.utils import homogenize_frame, homogenize_sign, cs_from_origin_frame, cs_to_origin_frame, project_to_plane, apply_homogeneous_transform
+from mechanical.utils import joinmeshes, df_to_mates, MateTypes, mates_equivalent, mate_types
 
 #import meshplot as mp
 #mp.offline()
@@ -47,7 +47,7 @@ class BatchSaver(DataVisitor):
 
 
 class DisplacementPenalty(DataVisitor):
-    def __init__(self, global_data, sliding_distance, rotation_angle, num_samples, include_vertices, meshpath, compute_all, augmented_mates, batch_path=None):
+    def __init__(self, global_data, sliding_distance, rotation_angle, num_samples, include_vertices, meshpath, compute_all, augmented_mates, batch_path=None, mc_path=None):
         self.transforms = [MeshLoader(meshpath)]
         self.global_data = global_data
         self.sliding_distance = sliding_distance
@@ -58,6 +58,7 @@ class DisplacementPenalty(DataVisitor):
         self.augmented_mates = augmented_mates
         if augmented_mates:
             self.transforms.append(LoadBatch(batch_path))
+            self.mc_path = mc_path
 
     
     def process_mate(self, mtype, pid1, pid2, meshes, rigidcomps, rel_distance, axis, origin, assembly_index):
@@ -157,6 +158,9 @@ class DisplacementPenalty(DataVisitor):
                 stats.append(row, mate_subset.iloc[j]['MateIndex'])
             
             if self.augmented_mates and data.ind in newmate_stats_df.index:
+                with h5py.File(os.path.join(self.mc_path, f'{data.ind}.hdf5'),'r') as f:
+                    norm_mat = np.array(f['normalization_matrix'])
+                inv_tf = LA.inv(norm_mat)
                 for j in range(newmate_subset.shape[0]):
                     if newmate_subset.iloc[j]['added_mate']:
                         pid1 = occ_to_index[newmate_subset.iloc[j]['part1']]
@@ -164,6 +168,7 @@ class DisplacementPenalty(DataVisitor):
                         axis_index = newmate_subset.iloc[j]['axis_index']
                         axis = data.batch.mcfs[axis_index,:3].numpy()
                         origin = data.batch.mcfs[axis_index,3:].numpy()
+                        origin = apply_homogeneous_transform(inv_tf, origin)
                         mtype = newmate_subset.iloc[j]['type']
                         row = self.process_mate(mtype, pid1, pid2, meshes, rigidcomps, rel_distance, axis, origin, data.ind)
                         augmented_stats.append(row, newmate_subset.iloc[j]['NewMateIndex'])

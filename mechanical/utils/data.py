@@ -1,7 +1,7 @@
 from mechanical.onshape import Mate
 from enum import Enum
 import numpy as np
-from mechanical.utils.transforms import compute_basis
+from mechanical.utils.transforms import compute_basis, apply_homogeneous_transform
 import numpy.linalg as LA
 
 def df_to_mates(mate_subset):
@@ -24,10 +24,7 @@ def newmate_df_to_mates(newmate_subset, batch, norm_tf):
             newmate_row = newmate_subset.iloc[j]
             axis_index = newmate_subset.iloc[j]['axis_index']
             origin = batch.mcfs[axis_index,3:].numpy()
-            origin_homo = np.concatenate([origin, [1]])
-            origin_homo = inv_tf @ origin_homo
-            origin_homo /= origin_homo[3]
-            origin = origin_homo[:3]
+            origin = apply_homogeneous_transform(inv_tf, origin)
             axis = batch.mcfs[axis_index,:3].numpy()
             axis = inv_tf[:3,:3] @ axis
             axes = compute_basis(axis)

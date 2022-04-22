@@ -30,6 +30,7 @@ parser = ArgumentParser()
 parser.add_argument('--index_file', nargs='+', default='/projects/grail/jamesn8/projects/mechanical/Mechanical/data/dataset/simple_valid_dataset.txt')
 parser.add_argument('--dataroot', default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/')
 parser.add_argument('--name', required=True)
+parser.add_argument('--targetname', default=None)
 parser.add_argument('--stride',type=int, default=100)
 parser.add_argument('--start_index', type=int, default=0)
 parser.add_argument('--stop_index', type=int, default=-1)
@@ -93,11 +94,17 @@ parser.add_argument('--split', nargs=3, type=int, default=[8, 1, 1])
 args = parser.parse_args()
 
 def main():
+    if args.targetname is None:
+        targetname = args.name
+    else:
+        targetname = args.targetname
+
     statspath = os.path.join(args.dataroot, args.name)
-    if not os.path.isdir(statspath):
-        os.mkdir(statspath)
+    outpath = os.path.join(args.dataroot, targetname)
+    if not os.path.isdir(outpath):
+        os.mkdir(outpath)
     
-    file_handler = logging.FileHandler(filename=os.path.join(statspath, 'log.txt'))
+    file_handler = logging.FileHandler(filename=os.path.join(outpath, 'log.txt'))
     stdout_handler = logging.StreamHandler(sys.stdout)
     handlers = [file_handler, stdout_handler]
 
@@ -109,7 +116,7 @@ def main():
 
     logging.info(f'args: {args}')
 
-    dataset = Dataset(args.index_file, args.stride, statspath, args.start_index, args.stop_index)
+    dataset = Dataset(args.index_file, args.stride, outpath, args.start_index, args.stop_index)
 
     mate_check_df_path = args.mate_check_df_path if args.mate_check_df_path is not None else os.path.join(statspath, 'mate_check_stats.parquet')
     newmate_df_path = args.newmate_df_path if args.newmate_df_path is not None else os.path.join(statspath, 'newmate_stats.parquet')
@@ -121,18 +128,18 @@ def main():
     globaldata = GlobalData(mate_check_df_path=mate_check_df_path, newmate_df_path=newmate_df_path, pspy_df_path=pspy_df_path)
 
     if args.mode == Mode.SAVE_BATCHES:
-        batchpath = os.path.join(statspath, 'batches')
+        batchpath = os.path.join(outpath, 'batches')
         if not os.path.isdir(batchpath):
             os.mkdir(batchpath)
         action = BatchSaver(globaldata, batchpath, args.use_uvnet_features, args.epsilon_rel, args.max_topologies, dry_run=args.dry_run)
 
     elif args.mode == Mode.PENETRATION:
         meshpath = os.path.join(args.dataroot, 'mesh')
-        action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, args.include_vertices, meshpath, compute_all=args.compute_all, augmented_mates=args.simulate_augmented_mates, batch_path=batch_path)
+        action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, args.include_vertices, meshpath, compute_all=args.compute_all, augmented_mates=args.simulate_augmented_mates, batch_path=batch_path, mc_path=mc_path)
     elif args.mode == Mode.CHECK_SAMPLES:
         action = UVSampleChecker(args.batch_path)
     elif args.mode == Mode.SAVE_AXIS_DATA:
-        mc_path = os.path.join(statspath, 'axis_data')
+        mc_path = os.path.join(outpath, 'axis_data')
         if not os.path.isdir(mc_path):
             os.mkdir(mc_path)
         action = MCDataSaver(globaldata, mc_path, args.max_axis_groups, args.epsilon_rel, args.max_topologies, save_frames=args.save_mc_frames, save_dirs=args.save_dirs, dry_run=args.dry_run)
@@ -141,17 +148,17 @@ def main():
         action = MateChecker(globaldata, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths)
     
     elif args.mode == Mode.SAVE_AXIS_AND_CHECK_MATES:
-        mc_path = os.path.join(statspath, 'axis_data')
+        mc_path = os.path.join(outpath, 'axis_data')
         if not os.path.isdir(mc_path):
             os.mkdir(mc_path)
         action = CombinedAxisMateChecker(globaldata, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run)
     
     elif args.mode == Mode.FULL_PIPELINE:
-        mc_path = os.path.join(statspath, 'axis_data')
+        mc_path = os.path.join(outpath, 'axis_data')
         if not os.path.isdir(mc_path):
             os.mkdir(mc_path)
         
-        batchpath = os.path.join(statspath, 'batches')
+        batchpath = os.path.join(outpath, 'batches')
         if not os.path.isdir(batchpath):
             os.mkdir(batchpath)
         
