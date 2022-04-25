@@ -50,7 +50,8 @@ parser.add_argument('--sliding_distance',type=float, default=.05, help='distance
 parser.add_argument('--rotation_angle',type=float, default=math.pi/16)
 parser.add_argument('--num_samples',type=int, default=100)
 parser.add_argument('--include_vertices', action='store_true')
-parser.add_argument('--compute_all',action='store_true')
+parser.add_argument('--compute_all_motions',action='store_true')
+parser.add_argument('--simulate_all_axes',action='store_true')
 parser.add_argument('--simulate_augmented_mates',action='store_true')
 
 #axis args:
@@ -135,7 +136,7 @@ def main():
 
     elif args.mode == Mode.PENETRATION:
         meshpath = os.path.join(args.dataroot, 'mesh')
-        action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, args.include_vertices, meshpath, compute_all=args.compute_all, augmented_mates=args.simulate_augmented_mates, batch_path=batch_path, mc_path=mc_path)
+        action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, args.include_vertices, meshpath, compute_all=args.compute_all_motions, augmented_mates=args.simulate_augmented_mates, batch_path=batch_path, mc_path=mc_path, all_axes=args.simulate_all_axes, part_distance_threshold=args.distance_threshold)
     elif args.mode == Mode.CHECK_SAMPLES:
         action = UVSampleChecker(args.batch_path)
     elif args.mode == Mode.SAVE_AXIS_DATA:

@@ -8,6 +8,9 @@ import numpy as np
 #import meshplot as mp
 #mp.offline()
 
+def min_signed_distance_points_mesh(pc, V, F):
+    S, I, C = igl.signed_distance(pc, V, F)
+    return S.min()
 
 def min_signed_distance(meshes, samples=200, include_vertices=False):
     points, indices = sample_surface_points(meshes[0][0], meshes[0][1], samples)
@@ -21,16 +24,6 @@ def min_signed_distance(meshes, samples=200, include_vertices=False):
 def min_signed_distance_symmetric(meshes, samples=200, include_vertices=False):
     return min(min_signed_distance(meshes, samples=samples, include_vertices=include_vertices), min_signed_distance(list(reversed(meshes)), samples=samples, include_vertices=include_vertices))
 
-
-
-def mesh_overlap_volume(meshes, axis, quality=100):
-    tet = wm.Tetrahedralizer(stop_quality=100)
-    tet.set_meshes(list(zip(*meshes)))
-    tet.tetrahedralize()
-    V, F = tet.get_tet_mesh_from_csg(json.dumps({"operation":"intersection", "left": 0, "right": 1}))
-    intersection = igl.volume(V, F).sum()
-    smallest = min(igl.volume(*tet.get_tet_mesh_from_csg(json.dumps({"operation":"union", "left": i, "right": i}))) for i in range(2))
-    return intersection, smallest
 
 
 def motion_meshes(meshes, axis, origin, motion_type, displacement):
@@ -64,6 +57,16 @@ def displaced_min_signed_distance(meshes, axis, origin=None, motion_type='SLIDE'
     #p.save(f'debugvis_{motion_type}.html')
     
     return min_signed_distance_symmetric(meshes, samples=samples, include_vertices=include_vertices)
+
+
+def mesh_overlap_volume(meshes, axis, quality=100):
+    tet = wm.Tetrahedralizer(stop_quality=100)
+    tet.set_meshes(list(zip(*meshes)))
+    tet.tetrahedralize()
+    V, F = tet.get_tet_mesh_from_csg(json.dumps({"operation":"intersection", "left": 0, "right": 1}))
+    intersection = igl.volume(V, F).sum()
+    smallest = min(igl.volume(*tet.get_tet_mesh_from_csg(json.dumps({"operation":"union", "left": i, "right": i}))) for i in range(2))
+    return intersection, smallest
 
 
 if __name__ == '__main__':

@@ -47,7 +47,8 @@ class BatchSaver(DataVisitor):
 
 
 class DisplacementPenalty(DataVisitor):
-    def __init__(self, global_data, sliding_distance, rotation_angle, num_samples, include_vertices, meshpath, compute_all, augmented_mates, batch_path=None, mc_path=None):
+    def __init__(self, global_data, sliding_distance, rotation_angle, num_samples, include_vertices, meshpath, compute_all, augmented_mates, batch_path=None, mc_path=None, all_axes=False, part_distance_threshold=0.01):
+        self.part_distance_threshold = part_distance_threshold
         self.transforms = [MeshLoader(meshpath)]
         self.global_data = global_data
         self.sliding_distance = sliding_distance
@@ -56,15 +57,16 @@ class DisplacementPenalty(DataVisitor):
         self.include_vertices = include_vertices
         self.compute_all = compute_all
         self.augmented_mates = augmented_mates
-        if augmented_mates:
+        if augmented_mates or all_axes:
             self.transforms.append(LoadBatch(batch_path))
             self.mc_path = mc_path
+        self.all_axes = all_axes
 
     
     def process_mate(self, mtype, pid1, pid2, meshes, rigidcomps, rel_distance, axis, origin, assembly_index):
         row = {}
-        if self.compute_all or mtype == MateTypes.REVOLUTE or MateTypes.CYLINDRICAL or MateTypes.SLIDER:
-            if self.compute_all:
+        if self.compute_all or self.all_axes or mtype == MateTypes.REVOLUTE or MateTypes.CYLINDRICAL or MateTypes.SLIDER:
+            if self.compute_all or self.all_axes:
                 sliding = True
                 rotating = True
             else:
@@ -78,8 +80,10 @@ class DisplacementPenalty(DataVisitor):
                 elif mtype == MateTypes.SLIDER:
                     sliding = True
         
-
-            meshes_subset = [joinmeshes([mesh for k,mesh in enumerate(meshes) if rigidcomps[k] == rigidcomps[pid]]) for pid in [pid1, pid2]]
+            if self.all_axes:
+                meshes_subset = [meshes[id] for id in [pid1, pid2]]
+            else:
+                meshes_subset = [joinmeshes([mesh for k,mesh in enumerate(meshes) if rigidcomps[k] == rigidcomps[pid]]) for pid in [pid1, pid2]]
             #meshes_subset = [meshes[pid1], meshes[pid2]]
 
             #p = mp.plot(*meshes_subset[0])
@@ -145,36 +149,59 @@ class DisplacementPenalty(DataVisitor):
             maxPt = V.max(axis=0)
             maxdim = (maxPt - minPt).max()
             rel_distance = self.sliding_distance * maxdim
-            
-            for j in range(mate_subset.shape[0]):
-                pid1 = occ_to_index[mate_subset.iloc[j]['Part1']]
-                pid2 = occ_to_index[mate_subset.iloc[j]['Part2']]
-                tf = part_subset.iloc[pid1]['Transform']
-                origin = tf[:3,:3] @ mate_subset.iloc[j]['Origin1'] + tf[:3,3]
-                axis = tf[:3,:3] @ mate_subset.iloc[j]['Axes1'][:,2]
-                mtype = mate_subset.iloc[j]['Type']
 
-                row = self.process_mate(mtype, pid1, pid2, meshes, rigidcomps, rel_distance, axis, origin, data.ind)
-                stats.append(row, mate_subset.iloc[j]['MateIndex'])
-            
-            if self.augmented_mates and data.ind in newmate_stats_df.index:
+            if self.all_axes:
                 with h5py.File(os.path.join(self.mc_path, f'{data.ind}.hdf5'),'r') as f:
                     norm_mat = np.array(f['normalization_matrix'])
-                inv_tf = LA.inv(norm_mat)
-                for j in range(newmate_subset.shape[0]):
-                    if newmate_subset.iloc[j]['added_mate']:
-                        pid1 = occ_to_index[newmate_subset.iloc[j]['part1']]
-                        pid2 = occ_to_index[newmate_subset.iloc[j]['part2']]
-                        axis_index = newmate_subset.iloc[j]['axis_index']
-                        axis = data.batch.mcfs[axis_index,:3].numpy()
-                        origin = data.batch.mcfs[axis_index,3:].numpy()
-                        origin = apply_homogeneous_transform(inv_tf, origin)
-                        mtype = newmate_subset.iloc[j]['type']
-                        row = self.process_mate(mtype, pid1, pid2, meshes, rigidcomps, rel_distance, axis, origin, data.ind)
-                        augmented_stats.append(row, newmate_subset.iloc[j]['NewMateIndex'])
+                    inv_tf = LA.inv(norm_mat)
+                    for key in f['pair_data'].keys():
+                        if f['pair_data'][key].attrs['distance'] < self.part_distance_threshold:
+                            pid1, pid2 = [int(k) for k in key.split(',')]
 
+                            group = f['pair_data'][key]
+                            for axdir in group['axes'].keys():
+                                for ax in group['axes'][axdir]['indices']:
+                                    axis = data.batch.mcfs[ax,:3].numpy()
+                                    origin = data.batch.mcfs[ax,3:].numpy()
+                                    origin = apply_homogeneous_transform(inv_tf, origin)
+                                    mtype = ''
+                                    row = self.process_mate(mtype, pid1, pid2, meshes, rigidcomps, rel_distance, axis, origin, data.ind)
 
-        return {'mate_penetration_stats': stats, 'augmented_mate_penetration_stats': augmented_stats}
+                                    stats.append(row, {'Assembly':data.ind, 'part1': pid1, 'part2': pid2, 'axis': ax})
+
+                        
+            else:
+                for j in range(mate_subset.shape[0]):
+                    pid1 = occ_to_index[mate_subset.iloc[j]['Part1']]
+                    pid2 = occ_to_index[mate_subset.iloc[j]['Part2']]
+                    tf = part_subset.iloc[pid1]['Transform']
+                    origin = tf[:3,:3] @ mate_subset.iloc[j]['Origin1'] + tf[:3,3]
+                    axis = tf[:3,:3] @ mate_subset.iloc[j]['Axes1'][:,2]
+                    mtype = mate_subset.iloc[j]['Type']
+
+                    row = self.process_mate(mtype, pid1, pid2, meshes, rigidcomps, rel_distance, axis, origin, data.ind)
+                    stats.append(row, mate_subset.iloc[j]['MateIndex'])
+                
+                if self.augmented_mates and data.ind in newmate_stats_df.index:
+                    with h5py.File(os.path.join(self.mc_path, f'{data.ind}.hdf5'),'r') as f:
+                        norm_mat = np.array(f['normalization_matrix'])
+                    inv_tf = LA.inv(norm_mat)
+                    for j in range(newmate_subset.shape[0]):
+                        if newmate_subset.iloc[j]['added_mate']:
+                            pid1 = occ_to_index[newmate_subset.iloc[j]['part1']]
+                            pid2 = occ_to_index[newmate_subset.iloc[j]['part2']]
+                            axis_index = newmate_subset.iloc[j]['axis_index']
+                            axis = data.batch.mcfs[axis_index,:3].numpy()
+                            origin = data.batch.mcfs[axis_index,3:].numpy()
+                            origin = apply_homogeneous_transform(inv_tf, origin)
+                            mtype = newmate_subset.iloc[j]['type']
+                            row = self.process_mate(mtype, pid1, pid2, meshes, rigidcomps, rel_distance, axis, origin, data.ind)
+                            augmented_stats.append(row, newmate_subset.iloc[j]['NewMateIndex'])
+
+        if self.all_axes:
+            return {'axis_penetration_stats': stats}
+        else:
+            return {'mate_penetration_stats': stats, 'augmented_mate_penetration_stats': augmented_stats}
 
 class MCDataSaver(DataVisitor):
     def __init__(self, global_data, mc_path, max_axis_groups, epsilon_rel, max_topologies, save_frames=False, save_dirs=False, dry_run=False):

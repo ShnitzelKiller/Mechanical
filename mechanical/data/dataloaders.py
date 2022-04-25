@@ -99,7 +99,12 @@ class Stats:
         if not incremental:
             self.checkpoint = 0
         if len(self.rows) - self.checkpoint > 0:
-            df = ps.DataFrame(self.rows[self.checkpoint:], index=self.indices[self.checkpoint:] if self.indices else None)
+            if self.indices:
+                if isinstance(self.indices[0], dict):
+                    index = ps.MultiIndex.from_frame(ps.DataFrame(self.indices[self.checkpoint:]))
+                else:
+                    index = self.indices[self.checkpoint:]
+            df = ps.DataFrame(self.rows[self.checkpoint:], index=index if self.indices else None)
             for key in self.defaults:
                 df[key].fillna(self.defaults[key], inplace=True)
             if incremental:
