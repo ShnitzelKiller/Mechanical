@@ -46,7 +46,7 @@ parser.add_argument('--dry_run', action='store_true')
 parser.set_defaults(use_uvnet_features=True)
 
 #penetration args:
-parser.add_argument('--sliding_distance',type=float, default=.05, help='distance as a fraction of assembly maxdim')
+parser.add_argument('--sliding_distance',type=float, default=.025, help='distance as a fraction of assembly maxdim')
 parser.add_argument('--rotation_angle',type=float, default=math.pi/16)
 parser.add_argument('--num_samples',type=int, default=100)
 parser.add_argument('--include_vertices', action='store_true')

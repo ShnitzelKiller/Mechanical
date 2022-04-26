@@ -80,7 +80,7 @@ class DisplacementPenalty(DataVisitor):
                 elif mtype == MateTypes.SLIDER:
                     sliding = True
         
-            if self.all_axes:
+            if self.all_axes or self.compute_all:
                 meshes_subset = [meshes[id] for id in [pid1, pid2]]
             else:
                 meshes_subset = [joinmeshes([mesh for k,mesh in enumerate(meshes) if rigidcomps[k] == rigidcomps[pid]]) for pid in [pid1, pid2]]
@@ -166,7 +166,8 @@ class DisplacementPenalty(DataVisitor):
                                     origin = apply_homogeneous_transform(inv_tf, origin)
                                     mtype = ''
                                     row = self.process_mate(mtype, pid1, pid2, meshes, rigidcomps, rel_distance, axis, origin, data.ind)
-
+                                    del row['Assembly']
+                                    del row['type']
                                     stats.append(row, {'Assembly':data.ind, 'part1': pid1, 'part2': pid2, 'axis': ax})
 
                         
