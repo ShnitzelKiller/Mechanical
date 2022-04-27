@@ -43,6 +43,7 @@ parser.add_argument('--epsilon_rel', type=float, default=0.001)
 parser.add_argument('--no_uvnet_features', dest='use_uvnet_features', action='store_false')
 parser.add_argument('--use_uvnet_features', dest='use_uvnet_features', action='store_true')
 parser.add_argument('--dry_run', action='store_true')
+parser.add_argument('--simple_mcfs', action='store_true')
 parser.set_defaults(use_uvnet_features=True)
 
 #penetration args:
@@ -132,7 +133,7 @@ def main():
         batchpath = os.path.join(outpath, 'batches')
         if not os.path.isdir(batchpath):
             os.mkdir(batchpath)
-        action = BatchSaver(globaldata, batchpath, args.use_uvnet_features, args.epsilon_rel, args.max_topologies, dry_run=args.dry_run)
+        action = BatchSaver(globaldata, batchpath, args.use_uvnet_features, args.epsilon_rel, args.max_topologies, dry_run=args.dry_run, simple_mcfs=args.simple_mcfs)
 
     elif args.mode == Mode.PENETRATION:
         meshpath = os.path.join(args.dataroot, 'mesh')
@@ -143,16 +144,16 @@ def main():
         mc_path = os.path.join(outpath, 'axis_data')
         if not os.path.isdir(mc_path):
             os.mkdir(mc_path)
-        action = MCDataSaver(globaldata, mc_path, args.max_axis_groups, args.epsilon_rel, args.max_topologies, save_frames=args.save_mc_frames, save_dirs=args.save_dirs, dry_run=args.dry_run)
+        action = MCDataSaver(globaldata, mc_path, args.max_axis_groups, args.epsilon_rel, args.max_topologies, save_frames=args.save_mc_frames, save_dirs=args.save_dirs, dry_run=args.dry_run, simple_mcfs=args.simple_mcfs)
     
     elif args.mode == Mode.CHECK_MATES:
-        action = MateChecker(globaldata, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths)
+        action = MateChecker(globaldata, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, simple_mcfs=args.simple_mcfs)
     
     elif args.mode == Mode.SAVE_AXIS_AND_CHECK_MATES:
         mc_path = os.path.join(outpath, 'axis_data')
         if not os.path.isdir(mc_path):
             os.mkdir(mc_path)
-        action = CombinedAxisMateChecker(globaldata, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run)
+        action = CombinedAxisMateChecker(globaldata, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run, simple_mcfs=args.simple_mcfs)
     
     elif args.mode == Mode.FULL_PIPELINE:
         mc_path = os.path.join(outpath, 'axis_data')
@@ -163,16 +164,16 @@ def main():
         if not os.path.isdir(batchpath):
             os.mkdir(batchpath)
         
-        action = CombinedAxisBatchAugment(globaldata, mc_path, batchpath, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run, distance_threshold=args.distance_threshold, require_axis=args.require_axis, use_uvnet_features=args.use_uvnet_features, append_pair_data=args.append_pair_distance_data)
+        action = CombinedAxisBatchAugment(globaldata, mc_path, batchpath, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run, distance_threshold=args.distance_threshold, require_axis=args.require_axis, use_uvnet_features=args.use_uvnet_features, append_pair_data=args.append_pair_distance_data, simple_mcfs=args.simple_mcfs)
 
     elif args.mode == Mode.COMPARE_MC_COUNTS:
         action = MCCountChecker(mc_path, batch_path, args.check_individual_part_mcs)
     
     elif args.mode == Mode.ANALYZE_DISTANCES:
-        action = DistanceChecker(globaldata, args.distance_threshold, args.append_pair_distance_data, mc_path, args.epsilon_rel, args.max_topologies)
+        action = DistanceChecker(globaldata, args.distance_threshold, args.append_pair_distance_data, mc_path, args.epsilon_rel, args.max_topologies, simple_mcfs=args.simple_mcfs)
 
     elif args.mode == Mode.AUGMENT_MATES:
-        action = MateAugmentation(globaldata, mc_path, args.distance_threshold, args.require_axis, True, args.epsilon_rel, args.max_topologies)
+        action = MateAugmentation(globaldata, mc_path, args.distance_threshold, args.require_axis, True, args.epsilon_rel, args.max_topologies, simple_mcfs=args.simple_mcfs)
     
     elif args.mode == Mode.ADD_MATE_LABELS:
         action = MateLabelSaver(globaldata, mc_path, args.augmented_labels, args.dry_run, indices_only=args.indices_only)

@@ -68,13 +68,14 @@ class AssemblyInfo:
             self.occ_to_index[occ] = i
               
 
-    def __init__(self, part_paths, transforms, occ_ids, epsilon_rel=0.001, use_uvnet_features=False, max_topologies=10000, include_mcfs=True, precompute=False):
+    def __init__(self, part_paths, transforms, occ_ids, epsilon_rel=0.001, use_uvnet_features=False, max_topologies=10000, include_mcfs=True, precompute=False, single_face_mcfs=False):
         self.epsilon_rel = epsilon_rel
         self.use_uvnet_features = use_uvnet_features
         self.stats = dict()
         self.mate_stats = []
         self.invalid_occs = set()
         self.include_mcfs = include_mcfs
+        self.single_face_mcfs = single_face_mcfs
 
         self.parts = []
         self.part_paths = []
@@ -199,7 +200,11 @@ class AssemblyInfo:
                 assert(part.is_valid)
                 mc_origins = []
                 mc_axes = []
-                for k,mc in enumerate(part.default_mcfs):
+                if self.single_face_mcfs:
+                    all_mcfs = [mcf for mcf in part.default_mcfs if mcf.ref.axis_ref.reference_type.value == 0 and mcf.ref.origin_ref.reference_type.value == 0]
+                else:
+                    all_mcfs = part.default_mcfs
+                for k,mc in enumerate(all_mcfs):
                     mc_origins.append(apply_transform(tf, mc.origin, is_points=True))
                     mc_axes.append(apply_transform(tf, mc.axis, is_points=False))
                     self.mc_index_to_part.append((p, k))
@@ -802,6 +807,7 @@ class AssemblyInfo:
     def create_batches(self):
         options = PartFeatures()
         options.mcfs = self.include_mcfs
+        options.simple_mcfs = self.single_face_mcfs
         options.default_num_samples = DEFAULT_NUM_SAMPLES
         options.samples = self.use_uvnet_features
         datalist = [part_to_graph(part, options) for part in self.parts]

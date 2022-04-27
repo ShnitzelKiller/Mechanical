@@ -26,7 +26,7 @@ class MeshLoader:
         return data
 
 class AssemblyLoader:
-    def __init__(self, global_data, datapath='/projects/grail/benjones/cadlab', use_uvnet_features=False, epsilon_rel=0.001, max_topologies=5000, pair_data=False, include_mcfs=True, precompute=False, load_geometry=True):
+    def __init__(self, global_data, datapath='/projects/grail/benjones/cadlab', use_uvnet_features=False, epsilon_rel=0.001, max_topologies=5000, pair_data=False, include_mcfs=True, precompute=False, load_geometry=True, simple_mcfs=False):
         self.global_data = global_data
         self.datapath = datapath
         self.use_uvnet_features = use_uvnet_features
@@ -36,6 +36,7 @@ class AssemblyLoader:
         self.include_mcfs = include_mcfs
         self.precompute = precompute
         self.load_geometry = load_geometry
+        self.simple_mcfs = simple_mcfs
 
 
     def __call__(self, data):
@@ -76,7 +77,7 @@ class AssemblyLoader:
                 #else:
                 #    transforms.append(part_subset.iloc[j]['Transform'])
             
-            data.assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, epsilon_rel=self.epsilon_rel, use_uvnet_features=self.use_uvnet_features, max_topologies=self.max_topologies, include_mcfs=self.include_mcfs, precompute=self.precompute)
+            data.assembly_info = AssemblyInfo(part_paths, transforms, occ_ids, epsilon_rel=self.epsilon_rel, use_uvnet_features=self.use_uvnet_features, max_topologies=self.max_topologies, include_mcfs=self.include_mcfs, precompute=self.precompute, single_face_mcfs=self.simple_mcfs)
         else:
             data.occ_to_index = occ_to_index
         
