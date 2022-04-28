@@ -165,8 +165,9 @@ class Dataset:
         for i,ind in enumerate(self.index[self.start_index:self.stop_index]):
             logging.info(f'processing {i+self.start_index}/{len(self.index)} ({ind})')
             data = Data(ind)
-            transforms = compose(*action.transforms[::-1])
-            data = transforms(data)
+            if action.transforms:
+                transforms = compose(*action.transforms[::-1])
+                data = transforms(data)
             results = action(data)
             if results is not None:
                 self.log_results(results)

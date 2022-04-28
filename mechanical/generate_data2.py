@@ -23,12 +23,14 @@ class Mode(Enum):
     FINALIZE_DATASET = "FINALIZE_DATASET"
     CHECK_SAMPLES = "CHECK_SAMPLES"
     ADD_NORMALIZATION_MATRICES = "ADD_NORMALIZATION_MATRICES"
+    DUPLICATE_ASSEMBLIES = "DUPLICATE_ASSEMBLIES"
 
 parser = ArgumentParser()
 
 #data loading args
 parser.add_argument('--index_file', nargs='+', default='/projects/grail/jamesn8/projects/mechanical/Mechanical/data/dataset/simple_valid_dataset.txt')
 parser.add_argument('--dataroot', default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/')
+parser.add_argument('--scraped_dataroot', default='/projects/grail/benjones/cadlab/data')
 parser.add_argument('--name', required=True)
 parser.add_argument('--targetname', default=None)
 parser.add_argument('--stride',type=int, default=100)
@@ -134,7 +136,11 @@ def main():
         if not os.path.isdir(batchpath):
             os.mkdir(batchpath)
         action = BatchSaver(globaldata, batchpath, args.use_uvnet_features, args.epsilon_rel, args.max_topologies, dry_run=args.dry_run, simple_mcfs=args.simple_mcfs)
-
+    elif args.mode == Mode.DUPLICATE_ASSEMBLIES:
+        newjsonpath = os.path.join(outpath, 'json')
+        if not os.path.isdir(newjsonpath):
+            os.mkdir(newjsonpath)
+        action = MatelessAssemblyDuplicator(globaldata, args.scraped_dataroot, newjsonpath=newjsonpath)
     elif args.mode == Mode.PENETRATION:
         meshpath = os.path.join(args.dataroot, 'mesh')
         action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, args.include_vertices, meshpath, compute_all=args.compute_all_motions, augmented_mates=args.simulate_augmented_mates, batch_path=batch_path, mc_path=mc_path, all_axes=args.simulate_all_axes, part_distance_threshold=args.distance_threshold)

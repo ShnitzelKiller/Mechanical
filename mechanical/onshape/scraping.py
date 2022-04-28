@@ -1,4 +1,4 @@
-from mechanical.onshape import Onshape
+from mechanical.onshape.api import Onshape
 from pathlib import Path
 import json
 
@@ -8,7 +8,8 @@ class AssemblyDuplicator:
         self.api = Onshape()
     
 
-    def process_assembly(self, did, mv, eid, newdid=None, newwid=None):
+    def process_assembly(self, did, mv, eid, prefix='', newdid=None, newwid=None):
+        newname = None
 
         data_path = self.data_dir / 'assemblies' / did / mv / eid / 'default.json'
         document_path = self.data_dir / 'documents' / did / f'{mv}.json'
@@ -33,14 +34,14 @@ class AssemblyDuplicator:
                 raise Exception(f'element not in document')
 
             if newdid is None:
-                newname = f'{document_definition["data"]["name"]} Mateless'
+                newname = f'{prefix} {document_definition["data"]["name"]} Mateless'
                 
                 endpoint = f'documents/{did}/workspaces/{wid}/copy'
                 query = {'isPublic':True, 'newName': newname}
 
                 response = self.api.request('post', f'/api/{endpoint}', body=query)
                 if response.status_code < 200 or response.status_code >= 300:
-                    raise Exception(f'duplicating assembly was not successful.')
+                    raise Exception(f'duplicating assembly was not successful: {response.text}')
                 
                 
                 new_assembly_json = response.json()
@@ -62,37 +63,50 @@ class AssemblyDuplicator:
                     fid = feature['message']['featureId']
                     self.delete_feature(newdid, newwid, neweid, fid)
         
-            return newdid, newwid, neweid
+            return newdid, newwid, neweid, newname
 
             
         else:
             raise ValueError
         
     
+    def get_assembly(self, did, mv, eid):
+        
+        query = {
+                'includeMateConnectors':True,
+                'includeMateFeatures': True
+            }
+        endpoint = f'assemblies/d/{did}/m/{mv}/e/{eid}/'
+        response = self.api.request('get', f'/api/{endpoint}', query)
+        if response.status_code < 200 or response.status_code >= 300:
+            raise Exception(f'Request for assembly features {did}/{mv}/{eid} was not successful.: {response.text}')
+        json_data = response.json()
+        return json_data
+
     def get_elements(self, did, wid):
         endpoint = f'documents/d/{did}/w/{wid}/elements'
         response = self.api.request('get', f'/api/{endpoint}')
         if response.status_code < 200 or response.status_code >= 300:
-            raise Exception(f'requesting elements was not successful.')
+            raise Exception(f'requesting elements was not successful.: {response.text}')
         return response.json()
     
     def get_features(self, did, wid, eid):
         endpoint = f'assemblies/d/{did}/w/{wid}/e/{eid}/features'
         response = self.api.request('get',f'/api/{endpoint}')
         if response.status_code < 200 or response.status_code >= 300:
-            raise Exception(f'requesting features was not successful.')
+            raise Exception(f'requesting features was not successful.: {response.text}')
         return response.json()
     
     def delete_feature(self, did, wid, eid, fid):
         endpoint = f'assemblies/d/{did}/w/{wid}/e/{eid}/features/featureid/{fid}'
         response = self.api.request('delete',f'/api/{endpoint}')
         if response.status_code < 200 or response.status_code >= 300:
-            raise Exception(f'deleting feature d/{did}/w/{wid}/e/{eid}/f/{fid} was not successful.')
+            raise Exception(f'deleting feature d/{did}/w/{wid}/e/{eid}/f/{fid} was not successful: {response.text}')
 
 if __name__ == '__main__':
 
     dup = AssemblyDuplicator('/projects/grail/benjones/cadlab/data')
 
-    newdid, newwid, neweid = dup.process_assembly('d8a303e6739db91d4aab5bc5','150b669cde452a8c0eceeda0','6a06a9a7db2c8b85d3601940', newdid='63dd6441d8c1932d211ba4a1', newwid='eaea8bfef788195bd549952b')
+    newdid, newwid, neweid, newname = dup.process_assembly('d8a303e6739db91d4aab5bc5','150b669cde452a8c0eceeda0','6a06a9a7db2c8b85d3601940', newdid='63dd6441d8c1932d211ba4a1', newwid='eaea8bfef788195bd549952b')
 
-    print(newdid, newwid, neweid)
+    print(newdid, newwid, neweid, newname)

@@ -13,9 +13,9 @@ from mechanical.data.dataloaders import Data
 from mechanical.geometry import displaced_min_signed_distance, min_signed_distance_symmetric
 from mechanical.utils import homogenize_frame, homogenize_sign, cs_from_origin_frame, cs_to_origin_frame, project_to_plane, apply_homogeneous_transform
 from mechanical.utils import joinmeshes, df_to_mates, MateTypes, mates_equivalent, mate_types
+from mechanical.onshape.scraping import AssemblyDuplicator
 
-#import meshplot as mp
-#mp.offline()
+
 class DataVisitor:
     def __call__(self, data):
         return self.process(data)
@@ -26,6 +26,46 @@ class DataVisitor:
 class NoopVisitor(DataVisitor):
     def __init__(self, transforms):
         self.transforms = transforms
+
+
+class MatelessAssemblyDuplicator(DataVisitor):
+    def __init__(self, global_data, datapath, newjsonpath):
+        self.global_data = global_data
+        self.dup = AssemblyDuplicator(datapath)
+        self.newjsonpath = newjsonpath
+        self.transforms = []
+
+    def process(self, data):
+        stats = Stats()
+        assembly_df = self.global_data.assembly_df
+
+        did, mv, eid = assembly_df.loc[data.ind,'AssemblyPath'].split('_')
+        amsg = ''
+        try:
+            rescraped = self.dup.get_assembly(did, mv, eid)
+            with open(os.path.join(self.newjsonpath, f'{did}_{mv}_{eid}.json'), 'w', encoding='utf-8') as f:
+                f.write(str(rescraped))
+            asuccess = True
+        except Exception as e:
+            asuccess = False
+            amsg = str(e)
+
+        msg=''
+        newdid = ''
+        newmv=''
+        neweid=''
+        newname=''
+        try:
+            newdid, newmv, neweid, newname = self.dup.process_assembly(did, mv, eid, prefix=str(data.ind))
+            success = True
+        except Exception as e:
+            success = False
+            msg = str(e)
+        
+        stats.append({'newdid': newdid, 'newmv': newmv, 'neweid': neweid, 'newname': newname, 'succeeded': success, 'error': msg, 'scraping succeeded': asuccess, 'scraping error': amsg}, index=data.ind)
+        return {'assembly_duplication_stats': stats}
+
+
 
 class BatchSaver(DataVisitor):
     def __init__(self, global_data, out_path, use_uvnet_features, epsilon_rel, max_topologies, dry_run, simple_mcfs):
