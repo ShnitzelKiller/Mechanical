@@ -4,43 +4,7 @@ import pspy
 import os
 import numpy as np
 from mechanical.utils.transforms import project_to_plane
-
-def frame_from_mated_cs(mated_cs):
-    origin = np.array(mated_cs['origin'])
-    frame = np.array([mated_cs['xAxis'], mated_cs['yAxis'], mated_cs['zAxis']]).T
-    return origin, frame
-
-class Mate:
-    def __init__(self, mate_json=None, flattened=False, mcs=None, occIds=None, mateType='UNKNOWN', name='', origins=None, rots=None):
-        if mate_json is None:
-            if occIds is None:
-                raise ValueError
-            if mcs is None:
-                if origins is None or rots is None:
-                    raise ValueError
-                self.matedEntities = [(occ, (origin, rot)) for occ, origin, rot in zip(occIds, origins, rots)]
-            else:
-                frames = [mc.get_coordinate_system() for mc in mcs]
-                self.matedEntities = [(occ, (cs[:3,3], cs[:3,:3])) for occ, cs in zip(occIds, frames)]
-            self.type = mateType
-            self.name = name
-        else:
-            if flattened:
-                self.matedEntities = [(me['matedOccurrence'], frame_from_mated_cs(me['matedCS'])) for me in mate_json['matedEntities'] if me['occurrenceType'] == 'Part']
-            else:
-                mate_json = mate_json['featureData']
-                self.matedEntities = [(me['matedOccurrence'][-1], frame_from_mated_cs(me['matedCS'])) for me in mate_json['matedEntities']]
-            self.type = mate_json['mateType']
-            self.name = mate_json['name']
-    
-    def get_axes(self):
-        return [me[1][1][:,2] for me in self.matedEntities]
-
-    def get_origins(self):
-        return [me[1][0] for me in self.matedEntities]
-
-    def get_projected_origins(self, dir):
-        return [project_to_plane(origin, dir) for origin in self.get_origins()]
+from mechanical.data import Mate
 
 class Loader:
     def __init__(self, datapath):

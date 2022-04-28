@@ -1,4 +1,3 @@
-from onshape.brepio import Mate
 import os
 import json
 import numpy as np
@@ -8,7 +7,7 @@ import h5py
 from scipy.spatial.transform import Rotation as R
 import torch
 import functools
-from mechanical.utils.data import df_to_mates
+from mechanical.utils.data import df_to_mates, Mate
 
 
 def compose(*fs):

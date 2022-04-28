@@ -445,6 +445,7 @@ class CombinedAxisBatchAugment(DataVisitor):
         self.batch_saver = BatchSaver(global_data, batch_path, use_uvnet_features, epsilon_rel, max_topologies, dry_run, simple_mcfs=simple_mcfs)
         self.axis_saver = MCDataSaver(global_data, mc_path, max_axis_groups, epsilon_rel, max_topologies, save_frames=save_frames, save_dirs=save_dirs, dry_run=dry_run, simple_mcfs=simple_mcfs)
         self.mate_checker = MateChecker(global_data, mc_path, epsilon_rel, max_topologies, validate_feasibility=validate_feasibility, check_alternate_paths=check_alternate_paths, simple_mcfs=simple_mcfs)
+        self.transform_saver = TransformSaver(global_data, mc_path=mc_path)
         self.distance_checker = DistanceChecker(global_data, distance_threshold, append_pair_data, mc_path, epsilon_rel, max_topologies,simple_mcfs=simple_mcfs)
         self.augmenter = MateAugmentation(global_data, mc_path, distance_threshold, require_axis, matched_axes_only, epsilon_rel, max_topologies,simple_mcfs=simple_mcfs)
     
@@ -454,6 +455,7 @@ class CombinedAxisBatchAugment(DataVisitor):
         out_dict3 = self.augmenter(data)
         out_dict4 = self.batch_saver(data)
         out_dict5 = self.distance_checker(data)
+        self.transform_saver(data)
         return {**out_dict1, **out_dict2, **out_dict3, **out_dict4, **out_dict5}
     
 

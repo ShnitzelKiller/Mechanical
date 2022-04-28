@@ -198,6 +198,9 @@ def main():
         logging.info('writing training files')
         final_df = ps.read_parquet(os.path.join(args.dataroot, args.name, 'final_stat.parquet'))
         datalist = list(final_df[lambda df: df['valid']].index)
+        with open(os.path.join(args.dataroot, args.name, 'full.txt'),'w') as f:
+            f.writelines([str(l) + '\n' for l in datalist])
+        
         random.seed(args.seed)
         random.shuffle(datalist)
 
