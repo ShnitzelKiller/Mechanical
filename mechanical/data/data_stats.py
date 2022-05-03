@@ -14,7 +14,7 @@ from mechanical.geometry import displaced_min_signed_distance, min_signed_distan
 from mechanical.utils import homogenize_frame, homogenize_sign, cs_from_origin_frame, cs_to_origin_frame, project_to_plane, apply_homogeneous_transform
 from mechanical.utils import joinmeshes, df_to_mates, MateTypes, mates_equivalent, mate_types
 from mechanical.onshape.scraping import AssemblyDuplicator
-
+import pandas as ps
 
 class DataVisitor:
     def __call__(self, data):
@@ -28,6 +28,38 @@ class NoopVisitor(DataVisitor):
         self.transforms = transforms
 
 
+class TabCopier(DataVisitor):
+    def __init__(self, global_data, datapath, target_document_id, target_workspace_id, dup_df_path):
+        self.global_data = global_data
+        self.transforms = []
+        self.dup = AssemblyDuplicator(datapath)
+        self.target_document = target_document_id
+        self.target_workspace = target_workspace_id
+        self.dup_df = ps.read_parquet(dup_df_path)
+
+
+    def process(self, data):
+        stats = Stats()
+        if self.dup_df.loc[data.ind, 'succeeded']:
+
+            #did, mv, eid = assembly_df.loc[data.ind,'AssemblyPath'].split('_')
+            msg=''
+            neweid=''
+            did = self.dup_df.loc[data.ind, 'newdid']
+            wid = self.dup_df.loc[data.ind, 'newwid']
+            eid = self.dup_df.loc[data.ind, 'mateless_eid']
+
+            try:
+                response = self.dup.copy_element(self.target_document, self.target_workspace, did, wid, eid)
+                neweid = response['id']
+                success = True
+            except Exception as e:
+                msg = str(e)
+                success = False
+            
+            stats.append({'did': did, 'wid': wid, 'eid': eid, 'new_did': self.target_document, 'new_wid': self.target_workspace, 'new_eid': neweid, 'success': success, 'error': msg}, index=data.ind)
+            return {'tab_copy_stats': stats}
+
 class MatelessAssemblyDuplicator(DataVisitor):
     def __init__(self, global_data, datapath, newjsonpath):
         self.global_data = global_data
@@ -37,33 +69,33 @@ class MatelessAssemblyDuplicator(DataVisitor):
 
     def process(self, data):
         stats = Stats()
+        occ_stats = Stats()
         assembly_df = self.global_data.assembly_df
 
         did, mv, eid = assembly_df.loc[data.ind,'AssemblyPath'].split('_')
-        amsg = ''
-        try:
-            rescraped = self.dup.get_assembly(did, mv, eid)
-            with open(os.path.join(self.newjsonpath, f'{did}_{mv}_{eid}.json'), 'w', encoding='utf-8') as f:
-                f.write(str(rescraped))
-            asuccess = True
-        except Exception as e:
-            asuccess = False
-            amsg = str(e)
 
         msg=''
         newdid = ''
-        newmv=''
+        newwid=''
         neweid=''
+        name = ''
         newname=''
+        target_eid = ''
         try:
-            newdid, newmv, neweid, newname = self.dup.process_assembly(did, mv, eid, prefix=str(data.ind))
+            newdid, newwid, neweid, target_eid, name, newname, adef, new_occs = self.dup.copy_assembly_without_mates(did, mv, eid, prefix=str(data.ind))
+            for occ in new_occs:
+                occ_stats.append({'source_path': occ, 'transformedinstance_json': new_occs[occ], 'assembly': data.ind})
+            
+            with open(os.path.join(self.newjsonpath, f'{newdid}_{newwid}_{neweid}.json'), 'w', encoding='utf-8') as f:
+                f.write(str(adef))
             success = True
         except Exception as e:
             success = False
             msg = str(e)
+                    
         
-        stats.append({'newdid': newdid, 'newmv': newmv, 'neweid': neweid, 'newname': newname, 'succeeded': success, 'error': msg, 'scraping succeeded': asuccess, 'scraping error': amsg}, index=data.ind)
-        return {'assembly_duplication_stats': stats}
+        stats.append({'newdid': newdid, 'newwid': newwid, 'neweid': neweid, 'mateless_eid': target_eid, 'name': name, 'newname': newname, 'succeeded': success, 'error': msg}, index=data.ind)
+        return {'assembly_duplication_stats': stats, 'occ_mappings': occ_stats}
 
 
 

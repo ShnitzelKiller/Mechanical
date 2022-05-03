@@ -24,6 +24,7 @@ class Mode(Enum):
     CHECK_SAMPLES = "CHECK_SAMPLES"
     ADD_NORMALIZATION_MATRICES = "ADD_NORMALIZATION_MATRICES"
     DUPLICATE_ASSEMBLIES = "DUPLICATE_ASSEMBLIES"
+    COPY_TABS = "COPY_TABS"
 
 parser = ArgumentParser()
 
@@ -94,6 +95,11 @@ parser.set_defaults(augmented_labels=True)
 parser.add_argument('--seed', type=int, default=1234)
 parser.add_argument('--split', nargs=3, type=int, default=[8, 1, 1])
 
+#document API args
+parser.add_argument('--target_document', default='086f239f99f9cf9b2e216f10')
+parser.add_argument('--target_workspace', default='d23963f4c6e45364d606b0bf')
+parser.add_argument('--dup_df_path', default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/duplicator/assembly_duplication_stats.parquet')
+
 
 args = parser.parse_args()
 
@@ -141,6 +147,8 @@ def main():
         if not os.path.isdir(newjsonpath):
             os.mkdir(newjsonpath)
         action = MatelessAssemblyDuplicator(globaldata, args.scraped_dataroot, newjsonpath=newjsonpath)
+    elif args.mode == Mode.COPY_TABS:
+        action = TabCopier(globaldata, args.scraped_dataroot, args.target_document, args.target_workspace, args.dup_df_path)
     elif args.mode == Mode.PENETRATION:
         meshpath = os.path.join(args.dataroot, 'mesh')
         action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, args.include_vertices, meshpath, compute_all=args.compute_all_motions, augmented_mates=args.simulate_augmented_mates, batch_path=batch_path, mc_path=mc_path, all_axes=args.simulate_all_axes, part_distance_threshold=args.distance_threshold)
