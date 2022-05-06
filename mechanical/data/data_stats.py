@@ -192,8 +192,8 @@ class DisplacementPenalty(DataVisitor):
                 row[f'penalty_penetration_sliding_{k}'] = penalties_penetration_sliding[k]
                 row[f'penalty_separation_rotating_{k}'] = penalties_separation_rotating[k]
                 row[f'penalty_penetration_rotating_{k}'] = penalties_penetration_rotating[k]
-                row[f'max_penalty_sliding_{k}'] = max(base_penalty, max(penalties_separation_sliding[k], penalties_penetration_sliding[k]))
-                row[f'max_penalty_rotating_{k}'] = max(base_penalty, max(penalties_separation_rotating[k], penalties_penetration_rotating[k]))
+                row[f'max_penalty_sliding_{k}'] = max(max(base_penetration, base_separation), max(penalties_separation_sliding[k], penalties_penetration_sliding[k]))
+                row[f'max_penalty_rotating_{k}'] = max(max(base_penetration, base_separation), max(penalties_separation_rotating[k], penalties_penetration_rotating[k]))
             row[f'min_penalty_sliding'] = min(row[f'max_penalty_sliding_{k}'] for k in range(2))
             row[f'min_penalty_rotating'] = min(row[f'max_penalty_rotating_{k}'] for k in range(2))
         return row
