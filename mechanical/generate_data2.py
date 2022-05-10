@@ -57,6 +57,7 @@ parser.add_argument('--include_vertices', action='store_true')
 parser.add_argument('--compute_all_motions',action='store_true')
 parser.add_argument('--simulate_all_axes',action='store_true')
 parser.add_argument('--simulate_augmented_mates',action='store_true')
+parser.add_argument('--debug_plots',action='store_true')
 
 #axis args:
 parser.add_argument('--max_axis_groups',type=int, default=100)
@@ -104,6 +105,8 @@ parser.add_argument('--dup_df_path', default='/fast/jamesn8/assembly_data/assemb
 args = parser.parse_args()
 
 def main():
+    random.seed(args.seed)
+    
     if args.targetname is None:
         targetname = args.name
     else:
@@ -151,7 +154,7 @@ def main():
         action = TabCopier(globaldata, args.scraped_dataroot, args.target_document, args.target_workspace, args.dup_df_path)
     elif args.mode == Mode.PENETRATION:
         meshpath = os.path.join(args.dataroot, 'mesh')
-        action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, args.include_vertices, meshpath, compute_all=args.compute_all_motions, augmented_mates=args.simulate_augmented_mates, batch_path=batch_path, mc_path=mc_path, all_axes=args.simulate_all_axes, part_distance_threshold=args.distance_threshold)
+        action = DisplacementPenalty(globaldata, args.sliding_distance, args.rotation_angle, args.num_samples, args.include_vertices, meshpath, compute_all=args.compute_all_motions, augmented_mates=args.simulate_augmented_mates, batch_path=batch_path, mc_path=mc_path, all_axes=args.simulate_all_axes, part_distance_threshold=args.distance_threshold, debug_plot=args.debug_plots)
     elif args.mode == Mode.CHECK_SAMPLES:
         action = UVSampleChecker(args.batch_path)
     elif args.mode == Mode.SAVE_AXIS_DATA:
@@ -215,7 +218,6 @@ def main():
         with open(os.path.join(args.dataroot, args.name, 'full.txt'),'w') as f:
             f.writelines([str(l) + '\n' for l in datalist])
         
-        random.seed(args.seed)
         random.shuffle(datalist)
 
         split = args.split

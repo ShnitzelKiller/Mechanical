@@ -49,7 +49,7 @@ def add_axis(center, x_dir, y_dir, z_dir, scale=1, mate_type=None):
     elif mate_type == 'FASTENED':
         add_square(objects, center, x_dir, y_dir, scale/2, 'blue')
         add_square(objects, center, y_dir, z_dir, scale/2, 'red')
-        add_square(objects, center, z_dir, x_dir, scale/2, 'blue')
+        add_square(objects, center, z_dir, x_dir, scale/2, 'green')
     elif mate_type == 'SLIDER':
         add_square(objects, center, x_dir, y_dir, scale/2, 'cyan')
         add_square(objects, center+z_dir*scale/2, x_dir, y_dir, scale/2, 'cyan')

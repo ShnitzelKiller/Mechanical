@@ -48,13 +48,15 @@ def find_valid_assemblies(part_df):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', type=str)
+    parser.add_argument('--datapath',type=str, default='/projects/grail/benjones/cadlab')
     parser.add_argument('--path', default='/fast/jamesn8/assembly_data/')
     parser.add_argument('--postprocess', choices=['segmentation', 'filtering'])
+    parser.add_argument('--prefilter',action='store_true')
     parser.add_argument('--progress_interval', type=int, default=100)
     parser.add_argument('--deduped_df', default='/projects/grail/benjones/cadlab/data/deduped_assembly_list.parquet')
     args = parser.parse_args()
 
-    datapath = '/projects/grail/benjones/cadlab'
+    datapath = args.datapath
     loader = onshape.Loader(datapath)
     NAME = args.name
     PATH = args.path
@@ -63,13 +65,14 @@ def main():
     PROGRESS_INTERVAL = args.progress_interval
     
     if POSTPROCESS is None:
-        with open('data/dataset/subassembly_filters/filter_list.txt') as f:
-            filter_list = f.readlines()
-        print('making filter set')
         filter_set = set()
-        for l in filter_list:
-            filter_set.add(l.strip())
-        del filter_list
+        if args.prefilter:
+            with open('data/dataset/subassembly_filters/filter_list.txt') as f:
+                filter_list = f.readlines()
+            print('making filter set')
+            for l in filter_list:
+                filter_set.add(l.strip())
+            del filter_list
 
         valid_dict = dict()
 

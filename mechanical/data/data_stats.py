@@ -119,7 +119,7 @@ class BatchSaver(DataVisitor):
 
 
 class DisplacementPenalty(DataVisitor):
-    def __init__(self, global_data, sliding_distance, rotation_angle, num_samples, include_vertices, meshpath, compute_all, augmented_mates, batch_path=None, mc_path=None, all_axes=False, part_distance_threshold=0.01):
+    def __init__(self, global_data, sliding_distance, rotation_angle, num_samples, include_vertices, meshpath, compute_all, augmented_mates, batch_path=None, mc_path=None, all_axes=False, part_distance_threshold=0.01, debug_plot=False, plot_path='/fast/jamesn8/assembly_data/plots'):
         self.part_distance_threshold = part_distance_threshold
         self.transforms = [MeshLoader(meshpath)]
         self.global_data = global_data
@@ -133,6 +133,8 @@ class DisplacementPenalty(DataVisitor):
             self.transforms.append(LoadBatch(batch_path))
             self.mc_path = mc_path
         self.all_axes = all_axes
+        self.debug_plot=debug_plot
+        self.plot_path =plot_path
 
     
     def process_mate(self, mtype, pid1, pid2, meshes, rigidcomps, rel_distance, axis, origin, assembly_index):
@@ -174,12 +176,14 @@ class DisplacementPenalty(DataVisitor):
 
             if sliding:
                 for k,displacement in enumerate([rel_distance, -rel_distance]):
-                    sd = displaced_min_signed_distance(meshes_subset, axis, motion_type='SLIDE', samples=self.samples, displacement=displacement, include_vertices=self.include_vertices)
+                    debug_name = os.path.join(self.plot_path, f'{assembly_index}_{pid1}_{pid2}_sliding_{k}') if self.debug_plot else None
+                    sd = displaced_min_signed_distance(meshes_subset, axis, motion_type='SLIDE', samples=self.samples, displacement=displacement, include_vertices=self.include_vertices, debug_plot_name=debug_name)
                     penalties_penetration_sliding[k] = max(0, -sd) / rel_distance
                     penalties_separation_sliding[k] = max(0, sd) / rel_distance
             if rotating:
                 for k, angle in enumerate([self.rotation_angle, -self.rotation_angle]):
-                    sd = displaced_min_signed_distance(meshes_subset, axis, origin=origin, motion_type='ROTATE', samples=self.samples, displacement=angle, include_vertices=self.include_vertices)
+                    debug_name = os.path.join(self.plot_path, f'{assembly_index}_{pid1}_{pid2}_rotating_{k}') if self.debug_plot else None
+                    sd = displaced_min_signed_distance(meshes_subset, axis, origin=origin, motion_type='ROTATE', samples=self.samples, displacement=angle, include_vertices=self.include_vertices, debug_plot_name=debug_name)
                     penalties_penetration_rotating[k] = max(0, -sd) / rel_distance
                     penalties_separation_rotating[k] = max(0, sd) / rel_distance
 
