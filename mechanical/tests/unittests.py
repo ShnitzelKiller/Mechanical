@@ -14,7 +14,7 @@ class TestDataAnalysis(unittest.TestCase):
 
 
     def setUp(self):
-        loader = onshape.Loader('/projects/grail/benjones/cadlab')
+        loader = onshape.Loader('/projects/grail/benjones/cadlab/data')
         self.occs, self.mates = loader.load_flattened('b1962d9eb0863de9d3befdfb_0e59c1f11f56bbf035659f09_a60cbcfa67d608b28ffb10fa.json',geometry=False)
 
     def test_adjacency(self):

@@ -376,7 +376,7 @@ if __name__ == '__main__':
 
     #assemblyPath = '7886c69b1f149069e7a43bdb_b809b448b6da81db4b2388a0_1dc646f33c96254f526ea650.json' #skateboard
     assemblyPath = '080bda692c7362d9d8f550c0_2bb4d493fe1adaf882bc9c9f_2b9ddd420bbfde38934d34ef.json' #tesla board
-    datapath = '/projects/grail/benjones/cadlab'
+    datapath = '/projects/grail/benjones/cadlab/data'
     loader = brepio.Loader(datapath)
     occs, mates = loader.load_flattened(assemblyPath, geometry=False)
     adj_list = adjacency_list_from_brepdata(occs, mates)

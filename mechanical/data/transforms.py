@@ -25,7 +25,7 @@ class MeshLoader:
         return data
 
 class AssemblyLoader:
-    def __init__(self, global_data, datapath='/projects/grail/benjones/cadlab', use_uvnet_features=False, epsilon_rel=0.001, max_topologies=5000, pair_data=False, include_mcfs=True, precompute=False, load_geometry=True, simple_mcfs=False):
+    def __init__(self, global_data, datapath='/projects/grail/benjones/cadlab/data', use_uvnet_features=False, epsilon_rel=0.001, max_topologies=5000, pair_data=False, include_mcfs=True, precompute=False, load_geometry=True, simple_mcfs=False):
         self.global_data = global_data
         self.datapath = datapath
         self.use_uvnet_features = use_uvnet_features

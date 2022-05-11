@@ -48,12 +48,13 @@ def find_valid_assemblies(part_df):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', type=str)
-    parser.add_argument('--datapath',type=str, default='/projects/grail/benjones/cadlab')
+    parser.add_argument('--datapath',type=str, default='/projects/grail/benjones/cadlab/data')
     parser.add_argument('--path', default='/fast/jamesn8/assembly_data/')
     parser.add_argument('--postprocess', choices=['segmentation', 'filtering'])
     parser.add_argument('--prefilter',action='store_true')
     parser.add_argument('--progress_interval', type=int, default=100)
     parser.add_argument('--deduped_df', default='/projects/grail/benjones/cadlab/data/deduped_assembly_list.parquet')
+    parser.add_argument('--use_workspaces', action='store_true')
     args = parser.parse_args()
 
     datapath = args.datapath
@@ -83,7 +84,7 @@ def main():
         mate_rows = []
 
         j = 0
-        for num_processed,entry in enumerate(os.scandir(os.path.join(datapath,'data','flattened_assemblies'))):
+        for num_processed,entry in enumerate(os.scandir(os.path.join(datapath,'flattened_assemblies'))):
             if num_processed % 1000 == 0:
                 print(f'processed {num_processed}')
             
@@ -125,9 +126,15 @@ def main():
             for p, occ in enumerate(occs):
                 part = occs[occ][1]
                 did = part['documentId']
-                mv = part['documentMicroversion']
                 eid = part['elementId']
                 config = part['fullConfiguration']
+                if args.use_workspaces:
+                    with open(os.path.join(args.datapath, 'documents', f'{did}.json'),'r') as f:
+                        doc = json.load(f)
+                    mv = doc['defaultWorkspace']['id']
+                else:
+                    mv = part['documentMicroversion']
+
                 if 'partId' in part:
                     pid = part['partId']
                 else:
@@ -137,7 +144,7 @@ def main():
                 if filepath in valid_dict:
                     isValid = valid_dict[filepath]
                 else:
-                    filepath = os.path.join(datapath, 'data/models', filepath)
+                    filepath = os.path.join(datapath, 'models', filepath)
                     isValid = os.path.isfile(filepath)
                     valid_dict[filepath] = isValid
                 
@@ -148,7 +155,7 @@ def main():
         print('building dataframes...')
         assembly_df = DataFrame(assembly_rows, index=assembly_indices, columns=['AssemblyPath','ConnectedComponents','RigidPieces','LonePieces', 'NumParts', 'NumBinaryPartMates', 'TotalMates'])
         mate_df = DataFrame(mate_rows, columns=['Assembly','Part1','Part2','Type','Origin1','Axes1','Origin2','Axes2','Name'])
-        part_df = DataFrame(part_rows, columns=['Assembly','PartOccurrenceID','did','mv','eid','config','PartId', 'Transform', 'HasGeometry', 'RigidComponentID'])
+        part_df = DataFrame(part_rows, columns=['Assembly','PartOccurrenceID','did','wid' if args.use_workspaces else 'mv','eid','config','PartId', 'Transform', 'HasGeometry', 'RigidComponentID'])
 
         print('saving dataframes...')
         assembly_df.to_hdf(FULLNAME,'assembly')

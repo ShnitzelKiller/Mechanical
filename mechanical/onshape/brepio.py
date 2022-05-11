@@ -10,13 +10,14 @@ class Loader:
     def __init__(self, datapath):
         self.datapath = datapath
     
-    def load_flattened(self, path, geometry=True, skipInvalid=False, loadWorkspace=False, use_pspy=False):
+    def load_flattened(self, path, geometry=True, skipInvalid=False, returnWorkspace=False, use_pspy=False, use_workspaces=False):
         #_,fname = os.path.split(path)
         #name, ext = os.path.splitext(fname)
         #did, mv, eid = name.split('_')
-        with open(os.path.join(self.datapath, 'data/flattened_assemblies', path)) as f:
+        with open(os.path.join(self.datapath, 'flattened_assemblies', path)) as f:
             assembly_def = json.load(f)
         part_occs = assembly_def['part_occurrences']
+
         if not skipInvalid:
             for occ in part_occs:
                 if len(occ['partId']) == 0:
@@ -24,11 +25,16 @@ class Loader:
 
         def part_from_occ(occ, checkOnly=False, silent=False):
             did = occ['documentId']
-            mv = occ['documentMicroversion']
+            if use_workspaces:
+                with open(os.path.join(self.datapath, 'documents', f'{did}.json'),'r') as f:
+                    doc = json.load(f)
+                    wid = doc['defaultWorkspace']['id']
+            else:
+                mv = occ['documentMicroversion']
             eid = occ['elementId']
             config = occ['fullConfiguration']
             pid = occ['partId']
-            filepath = os.path.join(self.datapath, 'data/models/', did, mv, eid, config, f'{pid}.xt')
+            filepath = os.path.join(self.datapath, 'models/', did, wid if use_workspaces else mv, eid, config, f'{pid}.xt')
             if not os.path.isfile(filepath):
                 if silent:
                     return None
@@ -50,10 +56,10 @@ class Loader:
             part_occ_dict = dict([(occ['id'], (np.array(occ['transform']).reshape(4, 4), occ)) for occ in part_occs])
         mates = [Mate(mate, flattened=True) for mate in assembly_def['mates']]
 
-        if loadWorkspace:
+        if returnWorkspace:
             did = assembly_def['documentId']
             mv = assembly_def['documentMicroversion']
-            documentFname = os.path.join(self.datapath, f'data/documents/{did}/{mv}.json')
+            documentFname = os.path.join(self.datapath, f'documents/{did}/{mv}.json')
             if os.path.isfile(documentFname):
                 with open(documentFname) as f:
                     dj = json.load(f)
@@ -70,7 +76,7 @@ class Loader:
         Parts are a dict occurrence path -> (rigid transform, Part object)
         """
         if path is None and all(id is not None for id in (did, mv, eid)):
-            path = os.path.join(self.datapath, 'data/assemblies', did, mv, eid, 'default.json')
+            path = os.path.join(self.datapath, 'assemblies', did, mv, eid, 'default.json')
         elif path is not None:
             basepath, _ = os.path.split(path)
             basepath, eid = os.path.split(basepath)
@@ -101,7 +107,7 @@ class Loader:
             eid = pd['elementId']
             config = pd['fullConfiguration']
             pid = pd['partId']
-            return Part(os.path.join(self.datapath, 'data/models/', did, mv, eid, config, f'{pid}.xt'))
+            return Part(os.path.join(self.datapath, 'models/', did, mv, eid, config, f'{pid}.xt'))
 
 
         if geometry:

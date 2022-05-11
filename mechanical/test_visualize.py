@@ -27,7 +27,7 @@ if __name__ == '__main__':
 
     part_df.set_index('Assembly', inplace=True)
 
-    datapath = '/projects/grail/benjones/cadlab'
+    datapath = '/projects/grail/benjones/cadlab/data'
     loader = brepio.Loader(datapath)
 
     batch_path = '/fast/jamesn8/assembly_data/assembly_torch2_fixsize/full_pipeline/batches'

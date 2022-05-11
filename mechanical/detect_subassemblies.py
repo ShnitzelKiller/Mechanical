@@ -10,7 +10,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('out_path', default='/projects/grail/jamesn8/projects/mechanical/data/dataset/subassembly_filters/filter_list.txt')
 
-    datapath = '/projects/grail/benjones/cadlab'
+    datapath = '/projects/grail/benjones/cadlab/data'
     loader = brepio.Loader(datapath)
 
     filter_set = set()

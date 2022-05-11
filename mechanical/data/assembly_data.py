@@ -1006,7 +1006,7 @@ class AssemblyInfo:
 
 if __name__ == '__main__':
     import mechanical.onshape as brepio
-    datapath = '/projects/grail/benjones/cadlab'
+    datapath = '/projects/grail/benjones/cadlab/data'
     loader = brepio.Loader(datapath)
     geo, mates = loader.load_flattened('ca577462ab0f9ba6fb713102_e9b039af8f720b11d74037b5_e8f8d795c4941f6cf63a2a68.json', skipInvalid=True, geometry=False)
     occ_ids = list(geo.keys())
@@ -1026,7 +1026,7 @@ if __name__ == '__main__':
 #test that this assembly has all mates matched and found by heuristics
 if __name__ == 'createBatches':
     import mechanical.onshape as brepio
-    datapath = '/projects/grail/benjones/cadlab'
+    datapath = '/projects/grail/benjones/cadlab/data'
     loader = brepio.Loader(datapath)
     #geo, mates = loader.load_flattened('d8a598174bcbceaf7e2194e5_a54ba742eaa71cdd4dcefbaa_f7d8ddb4a32a4bfde5a45d20.json', skipInvalid=True, geometry=False)
     geo, mates = loader.load_flattened('e4803faed1b9357f8db3722c_ce43730c0f1758f756fc271f_c00b5256d7e874e534c083e8.json', skipInvalid=True, geometry=False)
@@ -1054,7 +1054,7 @@ if __name__ == 'createBatches':
 
 if __name__ == '__main__2':
     import onshape.brepio as brepio
-    datapath = '/projects/grail/benjones/cadlab'
+    datapath = '/projects/grail/benjones/cadlab/data'
     loader = brepio.Loader(datapath)
     #geo, mates = loader.load_flattened('87688bb8ccd911995ddc048c_6313170efcc25a6f36e56906_8ee5e722ed4853b12db03877.json', skipInvalid=True, geometry=False)
     #geo, mates = loader.load_flattened('e04c8a49d30adb3a5c0f1deb_3d9b45359a15b248f75e41a2_070617843f30f132ab9e6661.json', skipInvalid=True, geometry=False)
