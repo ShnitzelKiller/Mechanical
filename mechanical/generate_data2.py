@@ -29,7 +29,10 @@ class Mode(Enum):
 parser = ArgumentParser()
 
 #data loading args
-parser.add_argument('--index_file', nargs='+', default='/projects/grail/jamesn8/projects/mechanical/Mechanical/data/dataset/simple_valid_dataset.txt')
+parser.add_argument('--assembly_path', default='/projects/grail/benjones/cadlab/data')
+parser.add_argument('--index_file', nargs='+', default=None)
+parser.add_argument('--main_df', default='/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5')
+parser.add_argument('--part_df', default='/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5_segmentation.h5')
 parser.add_argument('--dataroot', default='/fast/jamesn8/assembly_data/assembly_torch2_fixsize/')
 parser.add_argument('--scraped_dataroot', default='/projects/grail/benjones/cadlab/data')
 parser.add_argument('--name', required=True)
@@ -129,7 +132,6 @@ def main():
 
     logging.info(f'args: {args}')
 
-    dataset = Dataset(args.index_file, args.stride, outpath, args.start_index, args.stop_index)
 
     mate_check_df_path = args.mate_check_df_path if args.mate_check_df_path is not None else os.path.join(statspath, 'mate_check_stats.parquet')
     newmate_df_path = args.newmate_df_path if args.newmate_df_path is not None else os.path.join(statspath, 'newmate_stats.parquet')
@@ -137,14 +139,19 @@ def main():
     mc_path = args.mc_path if args.mc_path is not None else os.path.join(statspath, 'axis_data')
     batch_path = args.batch_path if args.batch_path is not None else os.path.join(statspath, 'batches')
 
+    globaldata = GlobalData(mate_check_df_path=mate_check_df_path, newmate_df_path=newmate_df_path, pspy_df_path=pspy_df_path, main_df_path=args.main_df, part_df_path=args.part_df)
 
-    globaldata = GlobalData(mate_check_df_path=mate_check_df_path, newmate_df_path=newmate_df_path, pspy_df_path=pspy_df_path)
+    if not args.index_file:
+        index_file = globaldata.assembly_df.index
+    else:
+        index_file = args.index_file
+    dataset = Dataset(index_file, args.stride, outpath, args.start_index, args.stop_index)
 
     if args.mode == Mode.SAVE_BATCHES:
         batchpath = os.path.join(outpath, 'batches')
         if not os.path.isdir(batchpath):
             os.mkdir(batchpath)
-        action = BatchSaver(globaldata, batchpath, args.use_uvnet_features, args.epsilon_rel, args.max_topologies, dry_run=args.dry_run, simple_mcfs=args.simple_mcfs)
+        action = BatchSaver(globaldata, batchpath, args.use_uvnet_features, args.epsilon_rel, args.max_topologies, dry_run=args.dry_run, simple_mcfs=args.simple_mcfs, datapath=args.assembly_path)
     elif args.mode == Mode.DUPLICATE_ASSEMBLIES:
         newjsonpath = os.path.join(outpath, 'json')
         if not os.path.isdir(newjsonpath):
@@ -161,16 +168,16 @@ def main():
         mc_path = os.path.join(outpath, 'axis_data')
         if not os.path.isdir(mc_path):
             os.mkdir(mc_path)
-        action = MCDataSaver(globaldata, mc_path, args.max_axis_groups, args.epsilon_rel, args.max_topologies, save_frames=args.save_mc_frames, save_dirs=args.save_dirs, dry_run=args.dry_run, simple_mcfs=args.simple_mcfs)
+        action = MCDataSaver(globaldata, args.assembly_path, mc_path, args.max_axis_groups, args.epsilon_rel, args.max_topologies, save_frames=args.save_mc_frames, save_dirs=args.save_dirs, dry_run=args.dry_run, simple_mcfs=args.simple_mcfs)
     
     elif args.mode == Mode.CHECK_MATES:
-        action = MateChecker(globaldata, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, simple_mcfs=args.simple_mcfs)
+        action = MateChecker(globaldata, args.assembly_path, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, simple_mcfs=args.simple_mcfs)
     
     elif args.mode == Mode.SAVE_AXIS_AND_CHECK_MATES:
         mc_path = os.path.join(outpath, 'axis_data')
         if not os.path.isdir(mc_path):
             os.mkdir(mc_path)
-        action = CombinedAxisMateChecker(globaldata, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run, simple_mcfs=args.simple_mcfs)
+        action = CombinedAxisMateChecker(globaldata, args.assembly_path, mc_path, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run, simple_mcfs=args.simple_mcfs)
     
     elif args.mode == Mode.FULL_PIPELINE:
         mc_path = os.path.join(outpath, 'axis_data')
@@ -181,33 +188,33 @@ def main():
         if not os.path.isdir(batchpath):
             os.mkdir(batchpath)
         
-        action = CombinedAxisBatchAugment(globaldata, mc_path, batchpath, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run, distance_threshold=args.distance_threshold, require_axis=args.require_axis, use_uvnet_features=args.use_uvnet_features, append_pair_data=args.append_pair_distance_data, simple_mcfs=args.simple_mcfs)
+        action = CombinedAxisBatchAugment(globaldata, args.assembly_path, mc_path, batchpath, args.epsilon_rel, args.max_topologies, args.validate_feasibility, args.check_alternate_paths, args.max_axis_groups, save_frames=args.save_mc_frames, save_dirs=True, dry_run=args.dry_run, distance_threshold=args.distance_threshold, require_axis=args.require_axis, use_uvnet_features=args.use_uvnet_features, append_pair_data=args.append_pair_distance_data, simple_mcfs=args.simple_mcfs)
 
     elif args.mode == Mode.COMPARE_MC_COUNTS:
         action = MCCountChecker(mc_path, batch_path, args.check_individual_part_mcs)
     
     elif args.mode == Mode.ANALYZE_DISTANCES:
-        action = DistanceChecker(globaldata, args.distance_threshold, args.append_pair_distance_data, mc_path, args.epsilon_rel, args.max_topologies, simple_mcfs=args.simple_mcfs)
+        action = DistanceChecker(globaldata, args.assembly_path, args.distance_threshold, args.append_pair_distance_data, mc_path, args.epsilon_rel, args.max_topologies, simple_mcfs=args.simple_mcfs)
 
     elif args.mode == Mode.AUGMENT_MATES:
-        action = MateAugmentation(globaldata, mc_path, args.distance_threshold, args.require_axis, True, args.epsilon_rel, args.max_topologies, simple_mcfs=args.simple_mcfs)
+        action = MateAugmentation(globaldata, args.assembly_path, mc_path, args.distance_threshold, args.require_axis, True, args.epsilon_rel, args.max_topologies, simple_mcfs=args.simple_mcfs)
     
     elif args.mode == Mode.ADD_MATE_LABELS:
-        action = MateLabelSaver(globaldata, mc_path, args.augmented_labels, args.dry_run, indices_only=args.indices_only)
+        action = MateLabelSaver(globaldata, args.assembly_path, mc_path, args.augmented_labels, args.dry_run, indices_only=args.indices_only)
     
     elif args.mode == Mode.ADD_NORMALIZATION_MATRICES:
-        action = TransformSaver(globaldata, mc_path)
+        action = TransformSaver(globaldata, mc_path, args.assembly_path)
 
     elif args.mode == Mode.FINALIZE_DATASET:
-        action = DataChecker(globaldata, mc_path, batch_path, args.distance_threshold)
+        action = DataChecker(globaldata, mc_path, batch_path, args.distance_threshold, args.assembly_path)
 
     dataset.map_data(action)
 
     if args.mode == Mode.FULL_PIPELINE:
         logging.info('Saving mate labels final data check')
-        action2 = MateLabelSaver(globaldata, mc_path, args.augmented_labels, args.dry_run)
+        action2 = MateLabelSaver(globaldata, args.assembly_path, mc_path, args.augmented_labels, args.dry_run)
         dataset.map_data(action2)
-        action3 = DataChecker(globaldata, mc_path, batch_path, args.distance_threshold)
+        action3 = DataChecker(globaldata, mc_path, batch_path, args.distance_threshold, args.assembly_path)
         logging.info('Final data check')
         dataset.map_data(action3)
 

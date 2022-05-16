@@ -48,7 +48,7 @@ class AssemblyLoader:
 
         #TEMPORARY: Load correct transforms, and also save them separately
         #if args.mode == 'generate':
-        with open(os.path.join(self.datapath, 'data/flattened_assemblies', self.global_data.assembly_df.loc[data.ind, "AssemblyPath"] + '.json')) as f:
+        with open(os.path.join(self.datapath, 'flattened_assemblies', self.global_data.assembly_df.loc[data.ind, "AssemblyPath"] + '.json')) as f:
             assembly_def = json.load(f)
 
         part_occs = assembly_def['part_occurrences']
@@ -66,8 +66,9 @@ class AssemblyLoader:
                 tf_dict[occ['id']] = tf
 
             for j in range(part_subset.shape[0]):
-                rel_path = os.path.join(*[part_subset.iloc[j][k] for k in ['did','mv','eid','config']], f'{part_subset.iloc[j]["PartId"]}.xt')
-                path = os.path.join(self.datapath, 'data/models', rel_path)
+                wm = 'mv' if 'mv' in part_subset.keys() else 'wid'
+                rel_path = os.path.join(*[part_subset.iloc[j][k] for k in ['did',wm,'eid','config']], f'{part_subset.iloc[j]["PartId"]}.xt')
+                path = os.path.join(self.datapath, 'models', rel_path)
                 assert(os.path.isfile(path))
                 rel_part_paths.append(rel_path)
                 part_paths.append(path)

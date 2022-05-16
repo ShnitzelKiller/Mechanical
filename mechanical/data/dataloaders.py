@@ -9,9 +9,9 @@ class Data:
         self.ind = ind
 
 class GlobalData:
-    def __init__(self, newmate_df_path='', mate_check_df_path='', distance_df_path='', pspy_df_path=''):
-        self.df_name = '/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5'
-        self.updated_df_name = '/fast/jamesn8/assembly_data/assembly_data_with_transforms_all.h5_segmentation.h5'
+    def __init__(self, newmate_df_path='', mate_check_df_path='', distance_df_path='', pspy_df_path='', main_df_path='', part_df_path=''):
+        self.df_name = main_df_path
+        self.updated_df_name = part_df_path if part_df_path else main_df_path
         self.newmate_df_path = newmate_df_path
         self.mate_check_df_path = mate_check_df_path
         self.distance_df_path = distance_df_path
@@ -149,6 +149,8 @@ class Dataset:
                 with open(fname,'r') as f:
                     self.index = self.index.intersection({int(l.rstrip()) for l in f.readlines()})
             self.index = sorted(list(self.index))
+        else:
+            self.index = sorted(list(index_file))
         self.stride = stride
         self.stats_path = stats_path
         self.checkpoint_file = os.path.join(stats_path, 'chkpt.txt')

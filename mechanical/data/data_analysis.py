@@ -91,6 +91,12 @@ def main():
             if not entry.name.endswith('.json') or entry.name in filter_set:
                 continue
 
+            did, wid, eid = os.path.split(entry.name)[1].split('_')
+                
+            with open(os.path.join(args.datapath, 'elements', did, wid, eid),'r') as f:
+                doc = json.load(f)
+            assname = doc['name']
+
             occs, mates = loader.load_flattened(entry.name,geometry=False, skipInvalid=True)
 
             adj_list = adjacency_list_from_brepdata(occs, mates)
@@ -120,7 +126,7 @@ def main():
                         origins.append(me[1][0])
                     mate_rows.append([np.int32(j), mate.matedEntities[0][0], mate.matedEntities[1][0], mate.type, origins[0], axes[0], origins[1], axes[1], mate.name])
 
-            assembly_rows.append([os.path.splitext(entry.name)[0], np.int32(num_components), np.int32(num_rigid), np.int32(num_lone), np.int32(len(occs)), np.int32(num_part_mates), np.int32(len(mates))])
+            assembly_rows.append([os.path.splitext(entry.name)[0], np.int32(num_components), np.int32(num_rigid), np.int32(num_lone), np.int32(len(occs)), np.int32(num_part_mates), np.int32(len(mates)), assname])
             assembly_indices.append(np.int32(j)) 
             
             for p, occ in enumerate(occs):
@@ -153,7 +159,7 @@ def main():
             j += 1
 
         print('building dataframes...')
-        assembly_df = DataFrame(assembly_rows, index=assembly_indices, columns=['AssemblyPath','ConnectedComponents','RigidPieces','LonePieces', 'NumParts', 'NumBinaryPartMates', 'TotalMates'])
+        assembly_df = DataFrame(assembly_rows, index=assembly_indices, columns=['AssemblyPath','ConnectedComponents','RigidPieces','LonePieces', 'NumParts', 'NumBinaryPartMates', 'TotalMates', 'Name'])
         mate_df = DataFrame(mate_rows, columns=['Assembly','Part1','Part2','Type','Origin1','Axes1','Origin2','Axes2','Name'])
         part_df = DataFrame(part_rows, columns=['Assembly','PartOccurrenceID','did','wid' if args.use_workspaces else 'mv','eid','config','PartId', 'Transform', 'HasGeometry', 'RigidComponentID'])
 
