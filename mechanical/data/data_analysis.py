@@ -6,6 +6,8 @@ import json
 import numpy as np
 from mechanical.utils import adjacency_list, adjacency_list_from_brepdata, connected_components, homogenize, adjacency_matrix
 import argparse
+from tqdm import tqdm
+import logging
 
 
 def find_redundant_mates(mate_df):
@@ -46,13 +48,14 @@ def find_valid_assemblies(part_df):
 
 
 def main():
+    logging.basicConfig(filename='generate_dataframes.log', level=logging.DEBUG)
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', type=str)
     parser.add_argument('--datapath',type=str, default='/projects/grail/benjones/cadlab/data')
     parser.add_argument('--path', default='/fast/jamesn8/assembly_data/')
     parser.add_argument('--postprocess', choices=['segmentation', 'filtering'])
     parser.add_argument('--prefilter',action='store_true')
-    parser.add_argument('--progress_interval', type=int, default=100)
     parser.add_argument('--deduped_df', default='/projects/grail/benjones/cadlab/data/deduped_assembly_list.parquet')
     parser.add_argument('--use_workspaces', action='store_true')
     args = parser.parse_args()
@@ -61,16 +64,17 @@ def main():
     loader = onshape.Loader(datapath)
     NAME = args.name
     PATH = args.path
+    if not os.path.isdir(PATH):
+        os.mkdir(PATH)
     FULLNAME = os.path.join(PATH, NAME)
     POSTPROCESS = args.postprocess
-    PROGRESS_INTERVAL = args.progress_interval
     
     if POSTPROCESS is None:
         filter_set = set()
         if args.prefilter:
             with open('data/dataset/subassembly_filters/filter_list.txt') as f:
                 filter_list = f.readlines()
-            print('making filter set')
+            logging.info('making filter set')
             for l in filter_list:
                 filter_set.add(l.strip())
             del filter_list
@@ -83,10 +87,9 @@ def main():
         part_rows = []
         mate_rows = []
 
+        logging.info('scanning assemblies...')
         j = 0
-        for num_processed,entry in enumerate(os.scandir(os.path.join(datapath,'flattened_assemblies'))):
-            if num_processed % 1000 == 0:
-                print(f'processed {num_processed}')
+        for num_processed,entry in tqdm(enumerate(os.scandir(os.path.join(datapath,'flattened_assemblies')))):
             
             if not entry.name.endswith('.json') or entry.name in filter_set:
                 continue
@@ -158,12 +161,12 @@ def main():
 
             j += 1
 
-        print('building dataframes...')
+        logging.info('building dataframes...')
         assembly_df = DataFrame(assembly_rows, index=assembly_indices, columns=['AssemblyPath','ConnectedComponents','RigidPieces','LonePieces', 'NumParts', 'NumBinaryPartMates', 'TotalMates', 'Name'])
         mate_df = DataFrame(mate_rows, columns=['Assembly','Part1','Part2','Type','Origin1','Axes1','Origin2','Axes2','Name'])
         part_df = DataFrame(part_rows, columns=['Assembly','PartOccurrenceID','did','wid' if args.use_workspaces else 'mv','eid','config','PartId', 'Transform', 'HasGeometry', 'RigidComponentID'])
 
-        print('saving dataframes...')
+        logging.info('saving dataframes...')
         assembly_df.to_hdf(FULLNAME,'assembly')
         mate_df.to_hdf(FULLNAME,'mate')
         part_df.to_hdf(FULLNAME,'part')
@@ -171,9 +174,9 @@ def main():
     elif POSTPROCESS == 'segmentation':
         part_df = ps.read_hdf(FULLNAME, 'part')
         if 'RigidComponentID' in part_df.keys():
-            print('Segmentation data already present!')
+            logging.warning('Segmentation data already present!')
         else:
-            print('adding rigid component segmentation to data...')
+            logging.info('adding rigid component segmentation to data...')
             mate_df = ps.read_hdf(FULLNAME, 'mate')
             assembly_df = ps.read_hdf(FULLNAME, 'assembly')
 
@@ -182,9 +185,7 @@ def main():
 
             labelings = []
 
-            for k,ass in enumerate(part_df_indexed.index.unique()):
-                if k % PROGRESS_INTERVAL == 0:
-                    print(f'processing assembly {k}/{assembly_df.shape[0]}')
+            for k,ass in tqdm(enumerate(part_df_indexed.index.unique())):
                 num_mates = assembly_df.loc[ass, 'NumBinaryPartMates']
                 num_parts = assembly_df.loc[ass, 'NumParts']
                 part_subset = part_df_indexed.loc[ass,'PartOccurrenceID']
@@ -207,7 +208,7 @@ def main():
                 else:
                     labelings += list(range(num_parts))
             
-            print('creating updated dataframe')
+            logging.info('creating updated dataframe')
             part_df['RigidComponentID'] = labelings
             part_df.to_hdf(FULLNAME+'_'+POSTPROCESS+'.h5', 'part')
 
