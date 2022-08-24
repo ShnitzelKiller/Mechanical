@@ -25,6 +25,7 @@ class Mode(Enum):
     ADD_NORMALIZATION_MATRICES = "ADD_NORMALIZATION_MATRICES"
     DUPLICATE_ASSEMBLIES = "DUPLICATE_ASSEMBLIES"
     COPY_TABS = "COPY_TABS"
+    SAVE_MESHES = "SAVE_MESHES"
 
 parser = ArgumentParser()
 
@@ -152,6 +153,11 @@ def main():
         if not os.path.isdir(batchpath):
             os.mkdir(batchpath)
         action = BatchSaver(globaldata, batchpath, args.use_uvnet_features, args.epsilon_rel, args.max_topologies, dry_run=args.dry_run, simple_mcfs=args.simple_mcfs, datapath=args.assembly_path)
+    elif args.mode == Mode.SAVE_MESHES:
+        meshpath = os.path.join(outpath, 'meshes')
+        if not os.path.isdir(meshpath):
+            os.mkdir(meshpath)
+        action = MeshSaver(globaldata, args.assembly_path, meshpath)
     elif args.mode == Mode.DUPLICATE_ASSEMBLIES:
         newjsonpath = os.path.join(outpath, 'json')
         if not os.path.isdir(newjsonpath):

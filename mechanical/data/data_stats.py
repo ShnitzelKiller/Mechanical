@@ -12,9 +12,10 @@ import torch
 from mechanical.data.dataloaders import Data
 from mechanical.geometry import displaced_min_signed_distance, min_signed_distance_symmetric
 from mechanical.utils import homogenize_frame, homogenize_sign, cs_from_origin_frame, cs_to_origin_frame, project_to_plane, apply_homogeneous_transform
-from mechanical.utils import joinmeshes, df_to_mates, MateTypes, mates_equivalent, mate_types
+from mechanical.utils import joinmeshes, df_to_mates, MateTypes, mates_equivalent, mate_types, normalize_points
 from mechanical.onshape.scraping import AssemblyDuplicator
 import pandas as ps
+import trimesh
 
 class DataVisitor:
     def __call__(self, data):
@@ -26,6 +27,24 @@ class DataVisitor:
 class NoopVisitor(DataVisitor):
     def __init__(self, transforms):
         self.transforms = transforms
+
+
+class MeshSaver(DataVisitor):
+    def __init__(self, global_data, datapath, out_path):
+        self.global_data = global_data
+        self.out_path = out_path
+        self.transforms = [AssemblyLoader(global_data, datapath)]
+    
+    def process(self, data):
+        fname = os.path.join(self.out_path, f'{data.ind}.obj')
+        parts = data.assembly_info.parts
+        meshes = [(part.mesh.V, part.mesh.F) for part in parts]
+        mesh = joinmeshes(meshes)
+        mesh = (normalize_points(mesh[0]), mesh[1])
+        mesh = trimesh.Trimesh(vertices=mesh[0], faces=mesh[1])
+        mesh.export(fname)
+
+        return {}
 
 
 class TabCopier(DataVisitor):

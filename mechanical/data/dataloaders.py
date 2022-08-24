@@ -171,8 +171,13 @@ class Dataset:
             data = Data(ind)
             if action.transforms:
                 transforms = compose(*action.transforms[::-1])
+            try:
                 data = transforms(data)
-            results = action(data)
+                results = action(data)
+            except Exception as e:
+                logging.error("ERROR: " + str(e))
+                results = None
+            
             if results is not None:
                 self.log_results(results)
             if (i+self.start_index+1) % self.stride == 0:

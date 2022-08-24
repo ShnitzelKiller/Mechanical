@@ -207,6 +207,9 @@ def inter_group_matches(group_sizes, points, dim, eps, hash=None, point_to_group
     return proposals
 
 def joinmeshes(meshes):
+    """
+    Join together the meshes (represented as a list of (V,F) tuples)
+    """
     if len(meshes) > 1:
         F = []
         offset = 0
@@ -216,6 +219,17 @@ def joinmeshes(meshes):
         return np.vstack([v for v,f in meshes]), np.vstack(F)
     else:
         return meshes[0]
+
+def normalize_points(points):
+    """
+    Normalize the points so that their maximum extent in any dimension is [-1,1]
+    """
+    minPt = points.min(0)
+    maxPt = points.max(0)
+    median = (minPt + maxPt)/2
+    dims = maxPt - minPt
+    maxdim = max(dims)/2
+    return (points - median) / maxdim
 
 def adjacency_matrix(occs, mates):
     adj = np.zeros([len(occs), len(occs)], dtype=np.int32)
